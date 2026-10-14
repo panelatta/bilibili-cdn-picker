@@ -1,0 +1,135 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const { createDevice, SURGE_DIR } = require('../helpers/surge-vm');
+const { mediaUrl, NATIVE } = require('../helpers/sim');
+
+const ROOT = path.resolve(__dirname, '../..');
+const WUHAN = 'cn-hbwh-fx-01-12.bilivideo.com';
+const ARG = 'enabled=true&mode=manual&region=SG&targetMbps=80&historyPolicy=conservative&cellularDiscovery=false&routeRevision=default&probePolicy=&debug=false';
+
+function freshUrl(rep) {
+  return mediaUrl({ rep: rep || 30080, deadlineSec: Math.floor(Date.now() / 1000) + 3600 });
+}
+
+function request(device, url, headers) {
+  return device.run('request-router.js', {
+    $argument: ARG,
+    $request: { url, method: 'GET', id: 'r1', headers: Object.assign({ Host: new URL(url).host, 'User-Agent': 'bili-ios', Range: 'bytes=0-999' }, headers || {}) },
+  });
+}
+
+test('built bundles are current with src/', () => {
+  execFileSync(process.execPath, [path.join(ROOT, 'tools/build.mjs'), '--check'], { stdio: 'pipe' });
+});
+
+test('module file: scripts exist, patterns match only supported media, arguments declared', () => {
+  const text = fs.readFileSync(path.join(SURGE_DIR, 'BilibiliCDNPicker.sgmodule'), 'utf8');
+  const declared = /^#!arguments=(.*)$/m.exec(text)[1].split(',').map((x) => x.split(':')[0]);
+  const used = Array.from(text.matchAll(/\{\{\{([A-Z_]+)\}\}\}/g), (m) => m[1]);
+  assert.ok(used.length > 0);
+  used.forEach((name) => assert.ok(declared.includes(name), name));
+  const scripts = text.split('\n').filter((l) => /^BiliCDN-\w+ = type=/.test(l));
+  assert.equal(scripts.length, 6);
+  scripts.forEach((line) => {
+    const scriptPath = /script-path=([^,\s]+)/.exec(line)[1];
+    assert.ok(fs.existsSync(path.join(SURGE_DIR, scriptPath)), scriptPath);
+    const pm = /pattern=([^,\s]+)/.exec(line);
+    if (pm) {
+      const re = new RegExp(pm[1]);
+      assert.ok(re.test(freshUrl()));
+      assert.ok(re.test(freshUrl().replace(NATIVE, 'upos-hz-mirrorakam.akamaized.net')));
+      assert.ok(!re.test(freshUrl().replace(NATIVE, 'xy1x2x3x4xy.mcdn.bilivideo.cn')));
+      assert.ok(!re.test(freshUrl().replace(NATIVE, 'upos-sz-mirroraliov.bilivideo.com:4483')));
+      assert.ok(!re.test('https://api.bilibili.com/x/player/wbi/playurl?bvid=1'));
+    }
+  });
+  const panels = text.split('\n').filter((l) => /script-name=/.test(l));
+  assert.equal(panels.length, 2);
+  assert.match(text, /hostname = %APPEND% upos-\*\.bilivideo\.com, cn-\*\.bilivideo\.com, ec-\*\.bilivideo\.com, upos-\*\.akamaized\.net/);
+});
+
+test('Surge flow with bundles: capture, panel tap, rewrite, 403 fallback', async () => {
+  const device = createDevice({ cdn: { [NATIVE]: { delayMs: 120 }, [WUHAN]: { delayMs: 2 } } });
+
+  // Unrelated traffic passes untouched.
+  const other = await request(device, 'https://api.bilibili.com/x/web-interface/nav', {});
+  assert.equal(JSON.stringify(other.value), '{}');
+
+  // First media request: no decision yet, original request continues.
+  const first = await request(device, freshUrl());
+  assert.equal(JSON.stringify(first.value), '{}');
+  assert.equal(first.doneCount(), 1);
+  assert.ok(device.store.get('BiliCDNPicker.samples').includes(NATIVE));
+
+  // Periodic panel refresh renders state without any download.
+  const idle = await device.run('control-panel.js', { $argument: ARG + '&action=quick', $trigger: 'auto-interval', $input: { purpose: 'panel' } });
+  assert.equal(idle.value.title, 'B站 CDN');
+  assert.equal(device.httpCalls.length, 0);
+
+  // Tapping the panel runs a quick selection in the panel's own session.
+  const tapped = await device.run('control-panel.js', { $argument: ARG + '&action=quick', $trigger: 'button', $input: { purpose: 'panel' } });
+  assert.ok(device.httpCalls.length > 0);
+  assert.match(tapped.value.content, /cn-hbwh-fx-01-12/);
+  device.httpCalls.forEach((c) => {
+    assert.equal(c.options['binary-mode'], true);
+    assert.equal(c.options['auto-redirect'], false);
+    assert.ok(c.options.timeout > 0 && c.options.timeout <= 3);
+  });
+
+  // Later requests for the same resource go to the selected node.
+  const rewritten = await request(device, freshUrl());
+  assert.equal(rewritten.value.url, freshUrl().replace(NATIVE, WUHAN));
+  assert.equal(rewritten.value.headers.Host, WUHAN);
+  assert.equal(rewritten.value.headers.Range, 'bytes=0-999');
+
+  // A probe re-entering the router is stripped and left alone.
+  const probe = await request(device, freshUrl().replace(NATIVE, WUHAN), { 'X-BCP-Probe': 'x' });
+  assert.equal(probe.value.headers['X-BCP-Probe'], undefined);
+  assert.equal(probe.value.url, undefined);
+
+  // The selected node answers 403: the observer records it, later requests fall back.
+  const observed = await device.run('response-observer.js', {
+    $argument: ARG,
+    $request: { url: freshUrl().replace(NATIVE, WUHAN), method: 'GET', id: 'r1', headers: { Host: WUHAN } },
+    $response: { status: 403, headers: {} },
+  });
+  assert.equal(JSON.stringify(observed.value), '{}');
+  const after = await request(device, freshUrl());
+  assert.notEqual(after.value.headers && after.value.headers.Host, WUHAN);
+
+  // Network change event and Shortcuts stop action.
+  await device.run('network-event.js', { $event: { name: 'network-changed' } });
+  assert.equal(JSON.parse(device.store.get('BiliCDNPicker.meta')).generation, 1);
+  await device.run('discovery-runner.js', { $argument: ARG, $trigger: 'intent', $intent: { parameter: 'stop' } });
+  assert.ok(JSON.parse(device.store.get('BiliCDNPicker.control')).stopRequestedAt > 0);
+
+  // Logs never contain the signed query.
+  assert.ok(device.logs.every((l) => !l.includes('upsig')));
+  const stored = device.store.get('BiliCDNPicker.lastRun');
+  assert.ok(!stored.includes('upsig'));
+});
+
+test('cron timer in manual mode exits without network access', async () => {
+  const device = createDevice();
+  await request(device, freshUrl());
+  const r = await device.run('discovery-runner.js', { $argument: ARG, $cronexp: '*/15 * * * *' });
+  assert.equal(r.doneCount(), 1);
+  assert.equal(device.httpCalls.length, 0);
+});
+
+test('router errors still complete the request exactly once', async () => {
+  const device = createDevice();
+  const r = await device.run('request-router.js', {
+    $argument: ARG,
+    $request: { url: freshUrl(), method: 'GET', headers: { Host: NATIVE } },
+    $persistentStore: { read: () => { throw new Error('store down'); }, write: () => { throw new Error('store down'); } },
+  });
+  // VM objects come from another realm: compare their JSON form.
+  assert.equal(JSON.stringify(r.value), '{}');
+  assert.equal(r.doneCount(), 1);
+});
