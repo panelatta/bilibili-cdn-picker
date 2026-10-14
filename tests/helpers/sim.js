@@ -57,7 +57,7 @@ function createCdn(clock, behaviors, defaults) {
   const base = Object.assign({ latencyMs: 40, mbps: 50, kind: 'ok', objectLength: 50 * 1024 * 1024 }, defaults || {});
 
   function http(options) {
-    const host = /^https:\/\/([^/]+)/.exec(options.url)[1];
+    const host = /^https?:\/\/([^/]+)/.exec(options.url)[1];
     const b = Object.assign({}, base, behaviors[host] || {});
     const rm = /^bytes=(\d+)-(\d+)$/.exec(options.headers.Range || '');
     const start = rm ? Number(rm[1]) : 0;

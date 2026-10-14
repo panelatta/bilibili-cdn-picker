@@ -29,7 +29,7 @@ function createDevice(options) {
   };
 
   function httpGet(options, callback) {
-    const host = /^https:\/\/([^/]+)/.exec(options.url)[1];
+    const host = /^https?:\/\/([^/]+)/.exec(options.url)[1];
     const b = Object.assign({ delayMs: 20, status: 206 }, device.cdn[host] || {});
     httpCalls.push({ host, options });
     const m = /^bytes=(\d+)-(\d+)$/.exec(options.headers.Range || '');

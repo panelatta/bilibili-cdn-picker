@@ -277,3 +277,10 @@ test('failures and late responses stay on the dispatch network and exit revision
   assert.deepEqual(e.failures().resources, {});
   assert.equal(e.request().headers.Host, host);
 });
+
+test('debug mode emits a matched-request marker without exposing the signed query', () => {
+  const e = env('debug=true'), lines = [];
+  e.request(mediaUrl({ host: 'upos-hz-mirrorakam.akamaized.net', rep: 30232 }), { log: (line) => lines.push(line) });
+  assert.ok(lines.some((line) => line.includes('router_matched audio host=upos-hz-mirrorakam.akamaized.net')));
+  assert.ok(lines.every((line) => !line.includes('upsig') && !line.includes('deadline=')));
+});

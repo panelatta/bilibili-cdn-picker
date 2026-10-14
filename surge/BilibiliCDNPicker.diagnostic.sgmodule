@@ -1,0 +1,23 @@
+#!name=Bilibili CDN Picker Diagnostic
+#!desc=B 站点播 DASH 媒体 CDN 测速与选择（v0.3.2，手动探索版）。用当前播放资源做 Range 实测，支持 HTTP 80 与 HTTPS 443，只改写后续 /upgcxcode/*.m4s 请求的主机与 Host。需开启 MITM 并信任证书；停用模块即恢复原生行为。
+#!category=Bilibili
+
+[General]
+force-http-engine-hosts = %APPEND% upos-*.bilivideo.com:80, cn-*.bilivideo.com:80, ec-*.bilivideo.com:80, upos-*.akamaized.net:80
+
+[Script]
+BiliCDN-Router = type=http-request, pattern=^(?:http://(?:(?:upos|cn|ec)-[a-z0-9-]+\.bilivideo\.com|upos-[a-z0-9-]+\.akamaized\.net)(?::80)?|https://(?:(?:upos|cn|ec)-[a-z0-9-]+\.bilivideo\.com|upos-[a-z0-9-]+\.akamaized\.net)(?::443)?)/upgcxcode/[^?#]+\.m4s\?, requires-body=false, debug=true, engine=jsc, timeout=5, script-path=https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/a425c80fe70f216d05a7fefea3123824217e47af/surge/request-router.js, argument=enabled=true&mode=manual&region=SG&targetMbps=80&historyPolicy=conservative&cellularDiscovery=false&routeRevision=default&probePolicy=&debug=true
+BiliCDN-Observer = type=http-response, pattern=^(?:http://(?:(?:upos|cn|ec)-[a-z0-9-]+\.bilivideo\.com|upos-[a-z0-9-]+\.akamaized\.net)(?::80)?|https://(?:(?:upos|cn|ec)-[a-z0-9-]+\.bilivideo\.com|upos-[a-z0-9-]+\.akamaized\.net)(?::443)?)/upgcxcode/[^?#]+\.m4s\?, requires-body=false, debug=true, engine=jsc, timeout=5, script-path=https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/a425c80fe70f216d05a7fefea3123824217e47af/surge/response-observer.js, argument=enabled=true&mode=manual&region=SG&targetMbps=80&historyPolicy=conservative&cellularDiscovery=false&routeRevision=default&probePolicy=&debug=true
+BiliCDN-Runner = type=cron, cronexp="*/15 * * * *", engine=webview, timeout=75, script-path=https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/a425c80fe70f216d05a7fefea3123824217e47af/surge/discovery-runner.js, argument=enabled=true&mode=manual&region=SG&targetMbps=80&historyPolicy=conservative&cellularDiscovery=false&routeRevision=default&probePolicy=&debug=true
+BiliCDN-Panel = type=generic, engine=webview, timeout=75, script-path=https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/a425c80fe70f216d05a7fefea3123824217e47af/surge/control-panel.js, argument=enabled=true&mode=manual&region=SG&targetMbps=80&historyPolicy=conservative&cellularDiscovery=false&routeRevision=default&probePolicy=&debug=true&action=quick
+BiliCDN-Explore = type=generic, engine=webview, timeout=75, script-path=https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/a425c80fe70f216d05a7fefea3123824217e47af/surge/control-panel.js, argument=enabled=true&mode=manual&region=SG&targetMbps=80&historyPolicy=conservative&cellularDiscovery=false&routeRevision=default&probePolicy=&debug=true&action=full
+BiliCDN-Diagnostics = type=generic, engine=webview, timeout=5, script-path=https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/a425c80fe70f216d05a7fefea3123824217e47af/surge/control-panel.js, argument=enabled=true&mode=manual&region=SG&targetMbps=80&historyPolicy=conservative&cellularDiscovery=false&routeRevision=default&probePolicy=&debug=true&action=status
+BiliCDN-Network = type=event, event-name=network-changed, engine=jsc, timeout=5, script-path=https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/a425c80fe70f216d05a7fefea3123824217e47af/surge/network-event.js
+
+[Panel]
+BiliCDN-Loaded = title="BCP v0.3.2 已加载", content="静态安装标记，无需脚本运行。测速请运行 BiliCDN-Panel；诊断请运行 BiliCDN-Diagnostics。", style=info
+BiliCDN-Status = title="B站 CDN", content="点按刷新按钮：对当前播放资源运行快速选择", style=info, script-name=BiliCDN-Panel, update-interval=60
+BiliCDN-Discovery = title="B站 CDN · 完整探索", content="点按刷新按钮：对当前视频运行完整探索（目标预算 100 MiB，建议仅在 Wi-Fi 下使用）", style=info, script-name=BiliCDN-Explore, update-interval=3600
+
+[MITM]
+hostname = %APPEND% upos-*.bilivideo.com, cn-*.bilivideo.com, ec-*.bilivideo.com, upos-*.akamaized.net

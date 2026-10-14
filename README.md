@@ -2,7 +2,17 @@
 
 面向 iOS Surge 的 B 站点播 CDN 测速与选择模块。它用当前正在播放的视频或音频资源，对候选 CDN 做分阶段 Range 测速，确认足够快的节点后，只把同一资源后续的媒体请求改写到该节点。
 
-当前版本 v0.3.1 是首版实现（手动探索版），通过 113 个自动化测试，包括在模拟 Surge 运行时中执行构建产物的集成测试。iOS、Surge 与 Bilibili App 实机上的运行时能力尚未验证；正式使用前请按 [M0 实机能力验证清单](docs/runtime-experiments.md) 逐项确认。
+当前版本 v0.3.2 是首版实现（手动探索版），通过 120 个自动化测试，包括在模拟 Surge 运行时中执行构建产物的集成测试。iOS、Surge 与 Bilibili App 实机上的运行时能力尚未验证；正式使用前请按 [M0 实机能力验证清单](docs/runtime-experiments.md) 逐项确认。
+
+## 手机看不到面板或命中记录时
+
+`BiliBili → DIRECT` 表示直连出口，不妨碍本模块改写 CDN 主机。请求已完成且有下载字节时，速率栏的 `0 B/s` 不代表没有传输数据。截图中的 HTTPS Akamai `/upgcxcode/…m4s` 本来就符合匹配范围，不能把它未见备注归因于 HTTP 支持缺失。
+
+v0.3.2 将 `DEBUG` 同时连接到 Surge 原生脚本 `debug` 参数；命中的媒体请求会输出不含签名的 `router_matched` 标记。另补充 HTTP 80 媒体请求和限定主机的 HTTP 引擎声明，HTTPS 请求不会降级为 HTTP。
+
+面板依赖 Surge 的显示位置、功能授权和生效配置，不作为唯一入口。可以从脚本编辑器手动运行 `BiliCDN-Diagnostics` 查看版本、网络和样本；运行 `BiliCDN-Panel` 做快速选择，`BiliCDN-Explore` 做完整探索。手动运行结果会写入日志并发送本机通知；自动刷新不测速、不通知。
+
+若模块已启用但找不到脚本和面板，先停用旧版，再安装[无参数诊断模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.diagnostic.sgmodule)。该模块固定手动模式、SG 和调试开关，去掉参数替换，并提供无需脚本运行的静态 `BCP v0.3.2 已加载` 标记。不要同时启用普通版和诊断版。静态标记仍不出现时继续核对当前配置、模块加载及面板授权，不能仅凭界面列表为空确定根因。
 
 ## 工作方式
 
@@ -68,7 +78,7 @@
 | `CELLULAR_DISCOVERY` | `false` | 允许蜂窝网络下的自动任务和完整探索；手动快速选择始终可用，蜂窝预算 4 MiB |
 | `ROUTE_REVISION` | `default` | 更换代理出口后修改，使测速历史按出口隔离 |
 | `PROBE_POLICY` | 空 | 测速请求使用的 Surge 策略名；留空则按规则匹配，应与播放实际走的策略一致 |
-| `DEBUG` | `false` | 输出脱敏调试日志 |
+| `DEBUG` | `false` | 输出脱敏日志，并启用 Surge 请求备注中的原生脚本调试 |
 
 其余参数（并发、预算、超时、TTL、迟滞等）可在 Surge 的脚本持久化数据中写入 `BiliCDNPicker.config`，值为 JSON 对象，例如：
 
@@ -82,7 +92,7 @@
 
 ## 限制
 
-- 只处理默认端口的 `/upgcxcode/…/*.m4s` 点播分段，主机限于 `upos-*`、`cn-*`、`ec-*.bilivideo.com` 和 `upos-*.akamaized.net`。直播、BStar、PCDN/MCDN、DRM 资源一律直通。
+- 只处理 HTTP 80／HTTPS 443 默认端口的 `/upgcxcode/…/*.m4s` 点播分段，主机限于 `upos-*`、`cn-*`、`ec-*.bilivideo.com` 和 `upos-*.akamaized.net`。直播、BStar、PCDN/MCDN、DRM 资源一律直通。
 - 测速基于完成回调：超时请求的实际流量不可观测，按保守预留计入；服务器忽略 Range 时可能超出预算。预算是目标值，不是硬上限。
 - 回退只使用通过确认的备选。响应观察使用请求 ID 关联实际目标及原网络，缺少可靠关联时跳过；失败记录按网络与出口隔离。
 - 响应观察只能影响之后的请求，已经失败的请求依赖 App 自身重试。它不能发现没有响应头的超时、播放器停滞或解码问题。

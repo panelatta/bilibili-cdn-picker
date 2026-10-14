@@ -10,7 +10,8 @@ const done = rt.onceDone();
 const e = rt.env();
 
 panelMain({
-  panelAction: argumentValue(e.argument, 'action') || 'quick',
+  panelAction: e.intentParameter || argumentValue(e.argument, 'action') || 'quick',
+  environment: rt.environment(),
   trigger: e.trigger,
   argument: e.argument,
   network: rt.network,
@@ -22,7 +23,13 @@ panelMain({
   sink: rt.log,
   registryData,
 }).then(
-  (panel) => done(panel),
+  (panel) => {
+    if (e.trigger === 'editor' || e.trigger === 'intent') {
+      rt.log('[BiliCDN] ' + panel.title + '\n' + panel.content);
+      rt.notify(panel.title, '', panel.content);
+    }
+    done(panel);
+  },
   (err) => {
     rt.log('[BiliCDN] panel error: ' + (err && err.stack ? err.stack : err));
     done({ title: 'B站 CDN', content: '面板运行出错：' + (err && err.message ? err.message : err), style: 'error' });

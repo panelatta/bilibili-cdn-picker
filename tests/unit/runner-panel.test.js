@@ -377,3 +377,16 @@ test('disabled host cannot re-enter via region, history, preferred, cached or fu
     assert.notEqual(r.resources[0].winner, WUHAN);
   }
 });
+
+test('manual editor and Shortcuts can run quick selection without a visible panel', async () => {
+  for (const trigger of ['editor', 'intent']) {
+    const w = world(); w.play();
+    const panel = await w.clock.drive(panelMain(w.ctx({ trigger, panelAction: 'quick' })));
+    assert.ok(w.cdn.calls.length > 0);
+    assert.match(panel.content, /已确认/);
+  }
+  const w = world();
+  const panel = await w.clock.drive(panelMain(w.ctx({ trigger: 'editor', panelAction: 'status' })));
+  assert.equal(w.cdn.calls.length, 0);
+  assert.match(panel.content, /暂无媒体样本/);
+});

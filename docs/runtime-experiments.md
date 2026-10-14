@@ -1,10 +1,10 @@
 # M0 实机能力验证清单
 
-本清单对应[开发设计文档](development-design.md) §13.1。代码中的 113 个自动化测试只覆盖逻辑与构建产物；下列行为依赖 iOS、Surge 和 Bilibili App 的真实运行时，必须在目标设备上逐项确认。每项都记录 iOS、Surge、Bilibili App 版本及网络类型。
+本清单对应[开发设计文档](development-design.md) §13.1。代码中的 120 个自动化测试只覆盖逻辑与构建产物；下列行为依赖 iOS、Surge 和 Bilibili App 的真实运行时，必须在目标设备上逐项确认。每项都记录 iOS、Surge、Bilibili App 版本及网络类型。
 
 ## 手机首轮验证
 
-先在 Wi-Fi 下验证手动流程，再测试自动模式。远程安装地址见 [README](../README.md#安装)。本轮使用 v0.3.1 固定脚本，避免测试期间随主分支源码变化。
+先在 Wi-Fi 下验证手动流程，再测试自动模式。远程安装地址见 [README](../README.md#安装)。本轮使用 v0.3.2 固定脚本，避免测试期间随主分支源码变化。
 
 ### 安装与初始参数
 
@@ -13,10 +13,18 @@
 3. 参数设置为 `ENABLED=true`、`MODE=manual`、`REGION=SG`、`HISTORY_POLICY=conservative`、`CELLULAR_DISCOVERY=false`、`DEBUG=true`；`TARGET_MBPS` 保持 80，`PROBE_POLICY` 初次留空。
 4. 开启 Surge 的 MITM 和脚本功能。已有可用的 Surge CA 时复用它；否则在 Surge MITM 设置中生成并安装证书，按 iOS 引导完成描述文件安装，再到“设置 → 通用 → 关于本机 → 证书信任设置”开启该 Surge CA 的完全信任。模块只追加媒体域名，不需要设置全域通配。参见 [Surge MITM](https://manual.nssurge.com/http/mitm.html) 和 [Apple 证书信任说明](https://support.apple.com/zh-cn/102390)。
 
+### 面板不可见时的入口
+
+面板并不是测速脚本注册成功的充分或必要证据。先检查当前配置是否启用了正确的模块，Surge 是否已应用修改，以及面板功能授权。官方说明见 [Information Panel](https://manual.nssurge.com/tools/panel.html)。不要通过更改 Bilibili 的 DIRECT 策略来寻找面板。
+
+在脚本编辑器运行 `BiliCDN-Diagnostics`，或通过快捷指令运行同名脚本，诊断不会下载视频；结果写入日志和本机通知。`BiliCDN-Panel` 在脚本编辑器或快捷指令中也能执行快速选择；`BiliCDN-Explore` 执行完整探索。
+
+普通模块已勾选但没有脚本可运行时，可暂时停用它并安装无参数诊断模块，用静态 `BCP v0.3.2 已加载` 标记验证模块与面板是否生效。两种模块不能同时启用，以免同名脚本和匹配规则竞争。静态标记不可见仍需进一步检查生效配置和功能授权；不能将其直接判为 CDN 故障。
+
 ### 手动测速和改写
 
 1. 关闭本模块，用普通 UGC 视频固定 1080P 或 4K 播放 1～2 分钟，记下起播等待、缓冲次数、拖动恢复时间。保持同一网络与出口策略。
-2. 启用模块，继续播放，或拖动到未缓冲的位置，促使播放器发出新的媒体请求。Surge 请求记录应能看到主机为 `upos-*`、`cn-*` 或 `ec-*` 的 `/upgcxcode/…m4s` 请求，并命中 `BiliCDN-Router`。
+2. 启用模块，继续播放，或拖动到未缓冲的位置，促使播放器发出新的媒体请求。Surge 请求记录应能看到主机为 `upos-*`、`cn-*` 或 `ec-*` 的 `/upgcxcode/…m4s` 请求，且在 `DEBUG=true` 时于 Notes 中出现 `[BiliCDN] router_matched`。
 3. 采样后两分钟内打开 Surge 策略页，点“B站 CDN”面板的刷新按钮。不要先点“完整探索”。仅打开策略页造成的自动刷新不启动测速。
 4. 面板应显示本轮结果、节点、确认速度、覆盖率及流量。“保持原生”同样是正常结果，表示本轮没有足够优势的替代节点；不要求一定选武汉，也不要求一定达到 80 Mbps。
 5. 回到同一个视频，保持画质不变，拖动到未缓冲位置。检查后续新请求：若选中了替代节点，URL 主机与 Host 应匹配 winner，响应通常为 206；同一请求的路径和 query 不应因本模块改变。已有连接和已缓存数据不会因切换立即重新下载。
@@ -39,7 +47,7 @@
 
 1. 备份 Surge 配置，停用 Biliverse Redirect 等会改写同类媒体 URL 的模块或脚本。
 2. 安装模块（见 [README](../README.md#安装)），模块参数设 `DEBUG=true`，确认 MITM 证书已信任。
-3. 在 Surge 的请求查看器中筛选 `bilivideo`、`akamaized`；脚本日志在 Surge 的脚本日志页查看，所有行以 `[BiliCDN]` 开头。
+3. 在 Surge 的请求查看器中筛选 `bilivideo`、`akamaized`；脚本日志可在 Surge 的脚本日志页查看；DEBUG 同时开启原生请求备注输出，所有行以 `[BiliCDN]` 开头。
 4. 持久化数据键名均以 `BiliCDNPicker.` 开头，可在 Surge 的脚本数据查看器中检查。
 
 ## 实验与判定
@@ -81,3 +89,12 @@
 结论：通过 / 未通过 / 无法判断
 后续动作：
 ```
+
+
+## v0.3.2 复测重点
+
+- 截图对应的 HTTPS Akamai 音频 30232、视频 30066 路径在匹配测试中通过；协议或端口不符时不改写。
+- HTTP Akamai 请求的默认端口及显式 `:80` 都可采样，探测和真实改写保持原协议及签名。HTTP 与 HTTPS 的决策键隔离。
+- 开启 DEBUG，产生新的媒体请求，检查 `router_matched` 和 `sample_captured`。前者每次匹配均输出，后者受样本写入节流限制。
+- 无面板时从脚本编辑器运行诊断与快速选择；只查看诊断不会触发任何测速流量。
+- 若连静态安装标记和脚本都不存在，收集当前配置名称、模块来源和状态；避免发送完整配置中的代理凭据及证书私钥。

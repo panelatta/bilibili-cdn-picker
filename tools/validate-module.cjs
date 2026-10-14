@@ -23,9 +23,9 @@ function fields(text) {
 function validateModule(text, { remote = false } = {}) {
   if (/@@[A-Z_]+@@/.test(text)) throw new Error('Unexpanded build placeholder');
   const headers = [...text.matchAll(/^#!arguments=(.*)$/gm)];
-  if (headers.length !== 1) throw new Error('Expected one arguments header');
+  if (headers.length > 1) throw new Error('Expected at most one arguments header');
   const defaults = Object.create(null);
-  for (const entry of headers[0][1].split(',')) {
+  for (const entry of headers.length ? headers[0][1].split(',') : []) {
     const m = /^([A-Za-z0-9_]+)(?::(.+))?$/.exec(entry.trim());
     if (!m || (m[2] !== undefined && !m[2].trim())) throw new Error('Malformed argument declaration: ' + entry);
     if (Object.hasOwn(defaults, m[1])) throw new Error('Duplicate argument: ' + m[1]);
@@ -60,6 +60,7 @@ function validateModule(text, { remote = false } = {}) {
         new RegExp(f.pattern);
       }
       if (f.engine && !['jsc', 'webview', 'auto'].includes(f.engine)) throw new Error('Invalid engine');
+      if (f.debug && !['true', 'false'].includes(f.debug) && !/^\{\{\{[A-Za-z0-9_]+\}\}\}$/.test(f.debug)) throw new Error('Invalid debug');
       if (f.timeout && !(Number(f.timeout) > 0)) throw new Error('Invalid timeout');
       if (f['requires-body'] && !['true', 'false'].includes(f['requires-body'])) throw new Error('Invalid requires-body');
       if (f.type === 'cron' && (!f.cronexp || ![5, 6].includes(f.cronexp.split(/\s+/).length))) throw new Error('Invalid cronexp');
@@ -68,7 +69,7 @@ function validateModule(text, { remote = false } = {}) {
   }
   if (!Object.keys(scripts).length) throw new Error('Missing scripts');
   for (const f of Object.values(panels)) {
-    if (!scripts[f['script-name']] || scripts[f['script-name']].type !== 'generic') throw new Error('Panel must reference a generic script');
+    if (f['script-name'] && (!scripts[f['script-name']] || scripts[f['script-name']].type !== 'generic')) throw new Error('Panel must reference a generic script');
     if (f.style && !['good', 'info', 'alert', 'error'].includes(f.style)) throw new Error('Invalid panel style');
     if (f['update-interval'] && !(Number(f['update-interval']) > 0)) throw new Error('Invalid panel interval');
   }

@@ -27,7 +27,8 @@ const ENTRIES = {
 };
 const MODULE_TEMPLATE = 'src/module/BilibiliCDNPicker.sgmodule';
 const MODULE_NAME = 'BilibiliCDNPicker.sgmodule';
-const MEDIA_PATTERN = '^https://(?:(?:upos|cn|ec)-[a-z0-9-]+\\.bilivideo\\.com|upos-[a-z0-9-]+\\.akamaized\\.net)(?::443)?/upgcxcode/[^?#]+\\.m4s\\?';
+const MEDIA_HOST = '(?:(?:upos|cn|ec)-[a-z0-9-]+\\.bilivideo\\.com|upos-[a-z0-9-]+\\.akamaized\\.net)';
+const MEDIA_PATTERN = '^(?:http://' + MEDIA_HOST + '(?::80)?|https://' + MEDIA_HOST + '(?::443)?)/upgcxcode/[^?#]+\\.m4s\\?';
 const MODULE_ARGS = [
   'enabled={{{ENABLED}}}',
   'mode={{{MODE}}}',
@@ -134,7 +135,20 @@ function renderModule(base) {
 const outputs = {};
 for (const [name, entry] of Object.entries(ENTRIES)) outputs[name] = bundle(name, entry);
 outputs[MODULE_NAME] = renderModule('');
-if (baseUrl) outputs['BilibiliCDNPicker.remote.sgmodule'] = renderModule(baseUrl);
+if (baseUrl) {
+  const remote = renderModule(baseUrl);
+  outputs['BilibiliCDNPicker.remote.sgmodule'] = remote;
+  const { defaults } = validateModule(remote, { remote: true });
+  defaults.DEBUG = 'true';
+  const diagnostic = remote
+    .replace(/^#!name=.*$/m, '#!name=Bilibili CDN Picker Diagnostic')
+    .replace(/^#!arguments(?:-desc)?=.*\n/gm, '')
+    .replace(/\{\{\{(\w+)\}\}\}/g, (_, key) => defaults[key])
+    .replace(/argument="([^"]*)"/g, 'argument=$1')
+    .replace('[Panel]\n', '[Panel]\nBiliCDN-Loaded = title="BCP v' + pkg.version + ' 已加载", content="静态安装标记，无需脚本运行。测速请运行 BiliCDN-Panel；诊断请运行 BiliCDN-Diagnostics。", style=info\n');
+  validateModule(diagnostic, { remote: true });
+  outputs['BilibiliCDNPicker.diagnostic.sgmodule'] = diagnostic;
+}
 
 if (check) {
   const stale = Object.keys(outputs).filter((name) => {

@@ -1,6 +1,7 @@
 'use strict';
 
 const S = require('../core/state');
+const { version } = require('../../package.json');
 const { formatAge, formatBytes, formatMbps, shortHost } = require('../core/format');
 const { loadConfig, ensureMeta, currentNetwork } = require('./context');
 const { runAction, normalizeAction } = require('./runner');
@@ -74,6 +75,8 @@ function render(ctx, actionResult, title) {
   if (!config.enabled) head += ' · 已关闭';
   else if (control.paused) head += ' · 已暂停';
   lines.push(head);
+  const env = ctx.environment || {};
+  lines.push('CDN Picker v' + version + ' · Surge ' + (env['surge-version'] || '未知') + ' · ' + (env.system || '未知系统'));
 
   // Current resources: newest sample per media type on this network.
   const latest = {};
@@ -96,7 +99,11 @@ function render(ctx, actionResult, title) {
     }
     lines.push('  样本 ' + formatAge(now - s.capturedAt) + (s.expiresAt > now ? '' : '（已过期）'));
   });
-  if (!latest.video && !latest.audio && !latest.unknown) lines.push('当前网络暂无媒体样本');
+  if (!latest.video && !latest.audio && !latest.unknown) {
+    lines.push('当前网络暂无媒体样本');
+    lines.push('支持 HTTP:80 / HTTPS:443 的 /upgcxcode/…m4s 请求。');
+    lines.push('只有 TCP/TLS 连接而无 HTTP 路径：检查原始 TCP 排除项、MITM 与握手错误。');
+  }
 
   if (actionResult && actionResult.status && !(actionResult.resources && actionResult.resources.length)) {
     lines.push('本次：' + statusText(actionResult.status));
@@ -157,7 +164,7 @@ async function panelMain(ctx) {
   const panelAction = normalizeAction(ctx.panelAction, 'quick');
   const title = panelAction === 'full' ? 'B站 CDN · 完整探索' : 'B站 CDN';
   let result = null;
-  if (ctx.trigger === 'button' && panelAction !== 'status') {
+  if (['button', 'editor', 'intent'].includes(ctx.trigger) && panelAction !== 'status') {
     result = await runAction(Object.assign({}, ctx, { action: panelAction }));
   }
   return render(ctx, result, title);

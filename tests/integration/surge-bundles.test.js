@@ -37,7 +37,7 @@ test('module file: scripts exist, patterns match only supported media, arguments
   assert.ok(used.length > 0);
   used.forEach((name) => assert.ok(declared.includes(name), name));
   const scripts = text.split('\n').filter((l) => /^BiliCDN-\w+ = type=/.test(l));
-  assert.equal(scripts.length, 6);
+  assert.equal(scripts.length, 7);
   scripts.forEach((line) => {
     const scriptPath = /script-path=([^,\s]+)/.exec(line)[1];
     assert.ok(fs.existsSync(path.join(SURGE_DIR, scriptPath)), scriptPath);
@@ -158,4 +158,33 @@ test('bundles retain request-time attribution across selection and ignore stripp
   assert.equal(scope.hosts[WUHAN], undefined);
   assert.ok(Object.values(scope.resources)[0].nativeFailedAt);
   assert.equal((await request(device, url)).request.headers.Host, WUHAN);
+});
+
+test('Akamai HTTP playback can be measured manually without a panel and preserves scheme', async () => {
+  const akamai = 'upos-hz-mirrorakam.akamaized.net';
+  const device = createDevice({ cdn: { [akamai]: { delayMs: 120 }, [WUHAN]: { delayMs: 2 } } });
+  const url = freshUrl().replace(NATIVE, akamai + ':80').replace('https:', 'http:');
+  await request(device, url);
+  const result = await device.run('control-panel.js', { $argument: ARG + '&action=quick', $trigger: 'editor' });
+  assert.match(result.value.content, /已确认/);
+  assert.ok(device.notifications.length > 0);
+  assert.ok(device.httpCalls.every((c) => c.options.url.startsWith('http://')));
+  const routed = await request(device, url);
+  assert.equal(routed.value.url, url.replace(akamai + ':80', WUHAN));
+  assert.equal(routed.value.headers.Host, WUHAN);
+  const tls = await request(device, url.replace('http:', 'https:').replace(':80/', '/'));
+  assert.equal(tls.value.url, undefined, 'HTTP result cannot be reused for HTTPS');
+});
+
+test('diagnostics from the script editor report runtime and samples without downloading', async () => {
+  const device = createDevice();
+  const result = await device.run('control-panel.js', { $argument: ARG + '&action=status', $trigger: 'editor' });
+  assert.match(result.value.content, /Surge 5.x/);
+  assert.match(result.value.content, /暂无媒体样本/);
+  assert.equal(device.httpCalls.length, 0);
+  assert.equal(device.notifications.length, 1);
+  assert.ok(device.logs.some((s) => s.includes('暂无媒体样本')));
+  await device.run('control-panel.js', { $argument: ARG + '&action=quick', $trigger: 'auto-interval' });
+  assert.equal(device.httpCalls.length, 0);
+  assert.equal(device.notifications.length, 1, 'periodic refresh does not send notifications');
 });

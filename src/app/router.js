@@ -31,6 +31,7 @@ function handleRequest(ctx) {
 
   const store = ctx.store;
   const config = loadConfig(store, ctx.argument).config;
+  if (config.debug && ctx.log) ctx.log('router_matched ' + match.info.mediaType + ' host=' + match.info.nativeHost);
   if (!config.enabled || loadControl(store).paused) return {};
 
   const now = ctx.now();

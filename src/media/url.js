@@ -39,7 +39,7 @@ function parseUrl(raw) {
 
 // Keeps everything after the authority byte-for-byte. Callers must have
 // validated the new host; ports are dropped deliberately (adapters only accept
-// default-port URLs).
+// default-port HTTP/HTTPS URLs).
 function replaceHost(parsed, newHost) {
   return parsed.prefix + newHost + parsed.rest;
 }

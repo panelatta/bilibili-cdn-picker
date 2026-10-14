@@ -92,7 +92,7 @@ test('adapter matches only verified upgcxcode m4s requests', () => {
   assert.ok(ok.info.deadlineMs > 0);
   assert.equal(matchMediaRequest(mediaUrl({ rep: 30280 }), 'GET').info.mediaType, 'audio');
   assert.equal(matchMediaRequest(mediaUrl(), 'POST'), null);
-  assert.equal(matchMediaRequest(mediaUrl().replace('https://', 'http://'), 'GET'), null);
+  assert.ok(matchMediaRequest(mediaUrl().replace('https://', 'http://'), 'GET'));
   assert.equal(matchMediaRequest(mediaUrl().replace('.com/', '.com:4483/'), 'GET'), null);
   assert.equal(matchMediaRequest(mediaUrl({ host: 'xy1x2.mcdn.bilivideo.cn' }), 'GET'), null);
   assert.equal(matchMediaRequest(mediaUrl({ host: 'upos-a.bilivideo.com.attacker.example' }), 'GET'), null);
@@ -110,4 +110,16 @@ test('resource key ignores the host but not the signed query', () => {
   assert.notEqual(a.resourceKey, c.resourceKey);
   assert.notEqual(a.resourceKey, d.resourceKey);
   assert.equal(a.groupKey, d.groupKey);
+});
+
+test('Akamai HTTP 80 is accepted without sharing HTTPS resource decisions', () => {
+  const https = mediaUrl({ host: 'upos-hz-mirrorakam.akamaized.net', rep: 30232 });
+  const http = https.replace('https:', 'http:');
+  const explicit = http.replace('.net/', '.net:80/');
+  assert.ok(matchMediaRequest(http, 'GET'));
+  assert.equal(matchMediaRequest(http, 'GET').info.resourceKey, matchMediaRequest(explicit, 'GET').info.resourceKey);
+  assert.notEqual(matchMediaRequest(http, 'GET').info.resourceKey, matchMediaRequest(https, 'GET').info.resourceKey);
+  for (const bad of [https.replace('.net/', '.net:80/'), http.replace('.net/', '.net:443/'), http.replace('.net/', '.net:4480/')]) {
+    assert.equal(matchMediaRequest(bad, 'GET'), null);
+  }
 });

@@ -22,6 +22,10 @@ function env() {
   };
 }
 
+function environment() {
+  return global('$environment') || {};
+}
+
 function network() {
   return global('$network') || {};
 }
@@ -96,4 +100,4 @@ function setTimer(fn, ms) {
   return t;
 }
 
-module.exports = { env, network, onceDone, storeBackend, httpGet, httpApi, log, notify, setTimer };
+module.exports = { env, environment, network, onceDone, storeBackend, httpGet, httpApi, log, notify, setTimer };

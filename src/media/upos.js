@@ -14,7 +14,8 @@ const PATH_RE = /^\/upgcxcode\/(?:[A-Za-z0-9_%-]+\/)+[A-Za-z0-9_%.-]+\.m4s$/;
 
 function match(parsed, method) {
   if (!parsed || String(method || '').toUpperCase() !== 'GET') return false;
-  if (parsed.scheme !== 'https' || parsed.effectivePort !== 443) return false;
+  const expectedPort = parsed.scheme === 'https' ? 443 : parsed.scheme === 'http' ? 80 : null;
+  if (expectedPort === null || parsed.effectivePort !== expectedPort) return false;
   if (parsed.query === null || parsed.fragment !== null) return false;
   if (!PATH_RE.test(parsed.path) || parsed.path.indexOf('/../') >= 0 || parsed.path.indexOf('/./') >= 0) return false;
   return mediaHostFamily(parsed.host) !== null;
@@ -29,7 +30,8 @@ function mediaTypeOf(representationId) {
 // The resource key covers the full path and the untouched query, i.e. one
 // signed representation. Range requests of one playback share it; different
 // qualities, signatures or expiries never do. The host is excluded so the
-// original and rewritten requests map to the same key.
+// original and rewritten requests map to the same key. HTTP and HTTPS keep
+// separate decisions: a fast HTTP route says nothing about its TLS path.
 function describe(parsed) {
   const file = parsed.path.slice(parsed.path.lastIndexOf('/') + 1);
   const rm = /-(\d{1,9})\.m4s$/.exec(file);
@@ -44,7 +46,7 @@ function describe(parsed) {
     family: mediaHostFamily(parsed.host),
     mediaType,
     representationId,
-    resourceKey: mediaType.charAt(0) + '-' + digest(parsed.path + '?' + parsed.query),
+    resourceKey: mediaType.charAt(0) + '-' + digest(parsed.scheme + '|' + parsed.effectivePort + '|' + parsed.path + '?' + parsed.query),
     groupKey: digest(groupId + '|' + (deadlineRaw || '')),
     deadlineMs,
     nativeHost: parsed.host,
