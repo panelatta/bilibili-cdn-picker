@@ -1,6 +1,6 @@
 {
   "name": "bilibili-cdn-picker",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "Surge (iOS) module that measures Bilibili media CDN nodes with Range probes and rewrites later media requests to the selected node.",
   "license": "GPL-3.0-only",

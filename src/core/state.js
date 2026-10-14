@@ -21,6 +21,7 @@ const KEYS = {
   control: PREFIX + 'control',
   trigger: PREFIX + 'trigger',
   lastRun: PREFIX + 'lastRun',
+  progress: PREFIX + 'progress',
 };
 const SCHEMA_VERSION = 1;
 const LIMITS = { samples: 8, decisions: 40, networks: 8, failures: 40, failureHosts: 60, profiles: 8, ranking: 80, attempts: 40 };

@@ -13,20 +13,16 @@ const { RequestPool } = require('../core/pool');
 const { adapterById } = require('../media/adapters');
 const S = require('../core/state');
 const { loadConfig, ensureMeta, currentNetwork } = require('./context');
+const { applyMobileLimits } = require('../core/mobile-limits');
+const { ACTIONS, normalizeAction } = require('../core/actions');
 
 // Discovery Runner (design §4.2). Runs as its own script session (panel tap,
 // Shortcuts, cron timer or HTTP-API evaluation), never inside a request
 // script. All results are committed only after re-checking lease, network
 // generation and network key.
 
-const ACTIONS = ['auto', 'quick', 'quick-force', 'full', 'status', 'stop', 'pause', 'resume', 'clear-network', 'clear-all'];
 const MANUAL_TRIGGERS = { button: true, intent: true, editor: true };
 const LEASE_GRACE_MS = 15000;
-
-function normalizeAction(value, fallback) {
-  const s = String(value || '').trim().toLowerCase();
-  return ACTIONS.indexOf(s) >= 0 ? s : fallback;
-}
 
 function writeControl(store, patch) {
   const control = store.readJson(S.KEYS.control, null);
@@ -42,7 +38,7 @@ async function runAction(ctx) {
   const store = ctx.store;
   const now = ctx.now();
   const loaded = loadConfig(store, ctx.argument);
-  const config = loaded.config;
+  const config = applyMobileLimits(loaded.config, ctx.environment);
   switch (action) {
     case 'status':
       return { action, status: 'status' };
@@ -59,7 +55,7 @@ async function runAction(ctx) {
       return clearNetwork(ctx, store, config, now);
     case 'clear-all':
       clearRequestContexts(store);
-      ['samples', 'decisions', 'failures', 'state', 'lease', 'trigger', 'lastRun', 'control'].forEach((k) => store.remove(S.KEYS[k]));
+      ['samples', 'decisions', 'failures', 'state', 'lease', 'trigger', 'lastRun', 'control', 'progress'].forEach((k) => store.remove(S.KEYS[k]));
       return { action, status: 'cleared' };
     default:
       return runDiscovery(ctx, action, config, loaded.warnings);
@@ -120,7 +116,11 @@ async function runDiscovery(ctx, requested, config, warnings) {
   summary.networkType = net.type;
   if (net.cellular && !config.cellularDiscovery && (automatic || action === 'full')) return early('cellular-blocked');
 
-  const registry = buildRegistry(ctx.registryData);
+  const activeLease = store.readJson(S.KEYS.lease, null);
+  if (S.isObject(activeLease) && activeLease.runId && activeLease.expiresAt > startedAt) {
+    return early('busy', { holder: activeLease.action, leaseExpiresAt: activeLease.expiresAt });
+  }
+  const registry = buildRegistry(ctx.registryData || (ctx.loadRegistry && ctx.loadRegistry()));
   const state = S.loadState(store);
   const logger = createLogger({ now: ctx.now, sink: ctx.sink, debug: config.debug, base: { gen: meta.generation } });
   if (state.candidateRevision !== registry.revision) {
@@ -158,8 +158,10 @@ async function runDiscovery(ctx, requested, config, warnings) {
   summary.mode = mode;
 
   const pool = new RequestPool(20);
-  const abortCheck = makeAbortCheck(ctx, store, config, meta, net, startedAt);
+  const abortCheck = makeAbortCheck(ctx, store, config, meta, net, startedAt, runId);
   const run = { ctx, store, config, net, meta, registry, state, profile, runId, deadlineAt, pool, logger, abortCheck, rng };
+  run.progress = { runId, action, networkKey: net.key, startedAt, deadlineAt, phase: 'starting', started: 0, completed: 0, active: true };
+  store.writeJson(S.KEYS.progress, Object.assign({}, run.progress, { updatedAt: startedAt }));
   try {
     for (let i = 0; i < picked.targets.length; i++) {
       const reason = abortCheck() || (ctx.now() + 3000 > deadlineAt ? 'deadline' : null);
@@ -169,12 +171,19 @@ async function runDiscovery(ctx, requested, config, warnings) {
       }
       summary.resources.push(await runForResource(run, picked.targets[i], mode));
     }
+  } catch (error) {
+    summary.status = 'failed';
+    summary.stopReason = 'internal-error';
   } finally {
+    const owner = store.readJson(S.KEYS.lease, null);
+    if (owner && owner.runId === runId) {
+      store.writeJson(S.KEYS.progress, Object.assign({}, run.progress, { active: false, updatedAt: ctx.now() }));
+    }
     releaseLease(store, runId);
   }
 
   const first = summary.resources[0];
-  summary.status = first ? first.status : 'aborted';
+  summary.status = summary.status || (first ? first.status : 'aborted');
   summary.stopReason = summary.stopReason || (first ? first.stopReason : null);
   summary.finishedAt = ctx.now();
   summary.events = logger.events;
@@ -241,7 +250,7 @@ function releaseLease(store, runId) {
   if (S.isObject(current) && current.runId === runId) store.writeJson(S.KEYS.lease, null);
 }
 
-function makeAbortCheck(ctx, store, config, meta, net, startedAt) {
+function makeAbortCheck(ctx, store, config, meta, net, startedAt, runId) {
   let lastCheck = -Infinity;
   let sticky = null;
   return function abortCheck() {
@@ -249,6 +258,8 @@ function makeAbortCheck(ctx, store, config, meta, net, startedAt) {
     const now = ctx.now();
     if (now - lastCheck < 500) return null;
     lastCheck = now;
+    const owner = store.readJson(S.KEYS.lease, null);
+    if (!owner || owner.runId !== runId) return (sticky = 'lease-lost');
     const control = S.loadControl(store);
     if (control.stopRequestedAt && control.stopRequestedAt >= startedAt) sticky = 'stopped-by-user';
     else if (control.paused) sticky = 'paused';
@@ -298,6 +309,21 @@ function rotate(list, start) {
   return list.slice(s).concat(list.slice(0, s));
 }
 
+function reportProgress(run, name, fields, mediaType) {
+  const p = run.progress;
+  const changed = fields.stage && fields.stage !== p.phase;
+  if (fields.stage) p.phase = fields.stage;
+  p.mediaType = mediaType;
+  if (name === 'probe_started') p.started++;
+  if (name === 'probe_completed' || name === 'probe_rejected') p.completed++;
+  const now = run.ctx.now();
+  if (!changed && p.updatedAt && now - p.updatedAt < 1000) return;
+  const owner = run.store.readJson(S.KEYS.lease, null);
+  if (!owner || owner.runId !== run.runId) return;
+  p.updatedAt = now;
+  run.store.writeJson(S.KEYS.progress, p);
+}
+
 async function runForResource(run, target, mode) {
   const { ctx, config, net, registry, profile, logger } = run;
   const now = ctx.now();
@@ -336,7 +362,10 @@ async function runForResource(run, target, mode) {
     setTimer: ctx.setTimer,
     deadlineAt: run.deadlineAt,
     shouldAbort: run.abortCheck,
-    log: (name, fields) => logger.event(name, Object.assign({ media: target.mediaType }, fields)),
+    log: (name, fields) => {
+      logger.event(name, Object.assign({ media: target.mediaType }, fields));
+      reportProgress(run, name, fields, target.mediaType);
+    },
     runId: run.runId,
     targetMbps: target$,
     cellular: net.cellular,

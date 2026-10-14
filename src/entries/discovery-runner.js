@@ -5,7 +5,6 @@ const { createStore } = require('../core/state');
 const { argumentValue } = require('../core/config');
 const { runAction, normalizeAction } = require('../app/runner');
 const { statusText } = require('../app/panel');
-const registryData = require('../../data/cdn-candidates.json');
 
 const done = rt.onceDone();
 const e = rt.env();
@@ -15,6 +14,7 @@ const action = normalizeAction(e.intentParameter || argumentValue(e.argument, 'a
 
 runAction({
   action,
+  environment: rt.environment(),
   trigger: e.trigger,
   argument: e.argument,
   network: rt.network,
@@ -24,7 +24,7 @@ runAction({
   http: rt.httpGet,
   setTimer: rt.setTimer,
   sink: rt.log,
-  registryData,
+  loadRegistry: () => require('../../data/cdn-candidates.json'),
 }).then(
   (result) => {
     if (!result.silent) {

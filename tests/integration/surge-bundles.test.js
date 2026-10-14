@@ -37,7 +37,7 @@ test('module file: scripts exist, patterns match only supported media, arguments
   assert.ok(used.length > 0);
   used.forEach((name) => assert.ok(declared.includes(name), name));
   const scripts = text.split('\n').filter((l) => /^BiliCDN-\w+ = type=/.test(l));
-  assert.equal(scripts.length, 7);
+  assert.equal(scripts.length, 8);
   scripts.forEach((line) => {
     const scriptPath = /script-path=([^,\s]+)/.exec(line)[1];
     assert.ok(fs.existsSync(path.join(SURGE_DIR, scriptPath)), scriptPath);
@@ -52,7 +52,7 @@ test('module file: scripts exist, patterns match only supported media, arguments
     }
   });
   const panels = text.split('\n').filter((l) => /script-name=/.test(l));
-  assert.equal(panels.length, 2);
+  assert.equal(panels.length, 3);
   assert.match(text, /hostname = %APPEND% upos-\*\.bilivideo\.com, cn-\*\.bilivideo\.com, ec-\*\.bilivideo\.com, upos-\*\.akamaized\.net/);
 });
 

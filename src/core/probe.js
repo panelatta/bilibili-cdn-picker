@@ -101,7 +101,7 @@ function evaluateProbe(spec, outcome) {
   const response = outcome.response;
   const status = Number(response.status !== undefined ? response.status : response.statusCode);
   result.status = isFinite(status) ? status : null;
-  result.bytes = dataLength(outcome.data);
+  result.bytes = typeof outcome.bodyBytes === 'number' ? outcome.bodyBytes : dataLength(outcome.data);
   const headers = response.headers;
   const cr = parseContentRange(getHeader(headers, 'Content-Range'));
   if (cr && cr.total !== null) result.objectLength = cr.total;
@@ -109,7 +109,7 @@ function evaluateProbe(spec, outcome) {
   if (status === 206) {
     const type = getHeader(headers, 'Content-Type') || '';
     const expectedEnd = spec.rangeStart + spec.rangeBytes - 1;
-    if (TEXTUAL_TYPE.test(type) || typeof outcome.data === 'string') result.kind = 'error-body';
+    if (TEXTUAL_TYPE.test(type) || outcome.bodyKind === 'text' || typeof outcome.data === 'string') result.kind = 'error-body';
     else if (!cr || cr.unsatisfied) result.kind = 'bad-content-range';
     else if (cr.start !== spec.rangeStart) result.kind = 'range-mismatch';
     else if (result.bytes !== cr.end - cr.start + 1) result.kind = 'length-mismatch';

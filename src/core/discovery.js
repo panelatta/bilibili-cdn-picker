@@ -41,7 +41,8 @@ class DiscoverySession {
     this.now = p.now || Date.now;
     this.setTimer = p.setTimer || defaultTimer;
     this.deadlineAt = p.deadlineAt;
-    this.shouldAbort = p.shouldAbort || (() => null);
+    this.safetyStop = null;
+    this.shouldAbort = () => this.safetyStop || (p.shouldAbort ? p.shouldAbort() : null);
     this.log = p.log || (() => {});
     this.runId = p.runId || 'run';
     this.targetMbps = p.targetMbps;
@@ -108,8 +109,11 @@ class DiscoverySession {
           error: outcome.error,
           response: outcome.response,
           data: outcome.data,
+          bodyBytes: outcome.bodyBytes,
+          bodyKind: outcome.bodyKind,
           completedAt: this.now(),
         });
+        outcome.data = null;
         // Without a response the transferred amount is unknown: keep the
         // conservative reservation instead of inventing a byte count.
         this.budget.settle(token, result.status === null ? null : result.bytes);
@@ -120,6 +124,9 @@ class DiscoverySession {
   }
 
   record(result) {
+    if (result.bytes > result.rangeBytes) {
+      this.safetyStop = 'unsafe-response';
+    }
     const m = this.measurements[result.host] || (this.measurements[result.host] = { attempts: 0, successes: 0 });
     m.attempts++;
     m.lastKind = result.kind;
@@ -156,7 +163,7 @@ class DiscoverySession {
       pool: this.pool,
       items: params.hosts.map((host) => ({ host })),
       concurrency: params.concurrency,
-      shouldStop: () => stopFlag,
+      shouldStop: () => stopFlag || this.shouldAbort(),
       launch: (item, index) => {
         const timeoutMs = tracker ? tracker.timeoutFor(index) : params.timeoutMs;
         const start = typeof params.rangeStart === 'function' ? params.rangeStart(item.host) : params.rangeStart || 0;
@@ -260,7 +267,7 @@ class DiscoverySession {
     const { results } = await this.stage({
       name: 'rescue',
       hosts: timedOut.slice(0, 4),
-      concurrency: 2,
+      concurrency: Math.min(2, this.config.refineConcurrency),
       rangeStart: 0,
       rangeBytes: this.config.coarseKiB * KiB,
       timeoutMs: this.config.rescueTimeoutMs,
@@ -536,6 +543,7 @@ class DiscoverySession {
   }
 
   finish(status, winner, backups, stopReason, eligible) {
+    stopReason = this.safetyStop || stopReason;
     if (!status) {
       if (winner) status = winner.score >= this.targetMbps ? 'target-reached' : 'selected';
       else status = Object.keys(this.coarseValid).length ? 'no-confirmed' : 'no-valid';

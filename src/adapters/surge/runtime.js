@@ -59,11 +59,24 @@ function httpGet(options) {
       return;
     }
     try {
-      client.get(options, (error, response, data) => resolve({ error: error || null, response, data }));
+      client.get(options, (error, response, data) => {
+        // Do not resolve a Promise with a video body: that retains the large
+        // bridged Uint8Array through subsequent async stages and GC cycles.
+        const compact = compactResponse(error, response, data);
+        data = null;
+        resolve(compact);
+      });
     } catch (e) {
       resolve({ error: String(e) });
     }
   });
+}
+
+function compactResponse(error, response, data) {
+  const bodyKind = typeof data === 'string' ? 'text' : data && typeof data.byteLength === 'number' ? 'binary' : 'missing';
+  const bodyBytes = bodyKind === 'binary' ? data.byteLength : bodyKind === 'text' ? data.length : 0;
+  return { error: error || null, response: response ? { status: response.status, headers: response.headers } : undefined,
+    bodyBytes, bodyKind };
 }
 
 function httpApi(method, path, body) {
@@ -100,4 +113,4 @@ function setTimer(fn, ms) {
   return t;
 }
 
-module.exports = { env, environment, network, onceDone, storeBackend, httpGet, httpApi, log, notify, setTimer };
+module.exports = { env, environment, network, onceDone, storeBackend, httpGet, compactResponse, httpApi, log, notify, setTimer };

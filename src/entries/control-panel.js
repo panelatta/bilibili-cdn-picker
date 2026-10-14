@@ -4,7 +4,6 @@ const rt = require('../adapters/surge/runtime');
 const { createStore } = require('../core/state');
 const { argumentValue } = require('../core/config');
 const { panelMain } = require('../app/panel');
-const registryData = require('../../data/cdn-candidates.json');
 
 const done = rt.onceDone();
 const e = rt.env();
@@ -21,7 +20,7 @@ panelMain({
   http: rt.httpGet,
   setTimer: rt.setTimer,
   sink: rt.log,
-  registryData,
+  loadRegistry: () => require('../../data/cdn-candidates.json'),
 }).then(
   (panel) => {
     if (e.trigger === 'editor' || e.trigger === 'intent') {

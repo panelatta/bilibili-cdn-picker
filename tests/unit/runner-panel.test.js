@@ -390,3 +390,69 @@ test('manual editor and Shortcuts can run quick selection without a visible pane
   assert.equal(w.cdn.calls.length, 0);
   assert.match(panel.content, /暂无媒体样本/);
 });
+
+test('iOS lower concurrency retains original resource scope, sample sizes and budget', async () => {
+  for (const action of ['quick', 'full']) {
+    const w = world();
+    w.play(); w.play(mediaUrl({ rep: 30232 }));
+    const result = await w.run(action, { environment: { system: 'iOS' } });
+    assert.equal(result.resources.length, action === 'full' ? 1 : 2);
+    assert.equal(result.resources[0].mediaType, 'video');
+    assert.ok(w.cdn.peak() <= 2);
+    const confirmBytes = (action === 'full' ? 4 : 1) * 1024 * 1024;
+    assert.ok(w.cdn.calls.some((c) => c.end - c.start + 1 === confirmBytes));
+    assert.equal(result.resources[0].budget.limitBytes, (action === 'full' ? 100 : 12) * 1024 * 1024);
+    assert.ok(result.finishedAt - result.startedAt <= 65000);
+    assert.equal(w.backend.data[S.KEYS.lease], undefined);
+    assert.equal(w.store().readJson(S.KEYS.progress).active, false);
+  }
+});
+
+test('range-ignoring server immediately stops iOS discovery after its first response', async () => {
+  const w = world({ behaviors: { [NATIVE]: { kind: 'full', mbps: 500, objectLength: 2 * 1024 * 1024 } } });
+  w.play();
+  const result = await w.run('full', { environment: { system: 'iOS' } });
+  assert.equal(w.cdn.calls.length, 1);
+  assert.equal(result.resources[0].stopReason, 'unsafe-response');
+  assert.equal(result.resources[0].complete, false);
+  assert.equal(result.resources[0].winner, null);
+});
+
+test('busy and periodic panel paths avoid candidate loading and show lease recovery timing', async () => {
+  const w = world();
+  const extra = { environment: { system: 'iOS' }, registryData: undefined,
+    loadRegistry: () => { throw new Error('candidate data should stay unloaded'); } };
+  w.store().writeJson(S.KEYS.lease, { runId: 'held', action: 'full', expiresAt: w.clock.now() + 45000 });
+  w.store().writeJson(S.KEYS.progress, { runId: 'held', phase: 'coarse', started: 8, completed: 7, active: true });
+  assert.equal((await w.run('quick', extra)).status, 'busy');
+  const busy = await w.clock.drive(panelMain(w.ctx({ ...extra, trigger: 'auto-interval', panelAction: 'quick' })));
+  assert.match(busy.content, /45 秒/);
+  assert.match(busy.content, /已完成 7 \/ 已启动 8/);
+  w.clock.advance(45001);
+  const stale = await w.clock.drive(panelMain(w.ctx({ ...extra, trigger: 'auto-interval', panelAction: 'quick' })));
+  assert.match(stale.content, /锁已过期/);
+  assert.equal(w.cdn.calls.length, 0);
+});
+
+test('a task that loses its lease stops downloading instead of competing until commit', async () => {
+  const w = world({ defaults: { latencyMs: 200, mbps: 10 } });
+  w.play();
+  const pending = runAction(w.ctx({ action: 'full', environment: { system: 'iOS' } }));
+  w.clock.setTimer(() => w.store().writeJson(S.KEYS.lease, { runId: 'new-owner', expiresAt: w.clock.now() + 45000 }), 600);
+  const result = await w.clock.drive(pending);
+  assert.equal(result.resources[0].stopReason, 'lease-lost');
+  assert.equal(result.resources[0].committed, false);
+  assert.ok(w.cdn.calls.length < 10);
+  assert.equal(w.store().readJson(S.KEYS.lease).runId, 'new-owner');
+});
+
+test('the stop panel stops dispatch and releases the running task normally', async () => {
+  const w = world({ defaults: { latencyMs: 200, mbps: 10 } });
+  w.play();
+  const pending = runAction(w.ctx({ action: 'full', environment: { system: 'iOS' } }));
+  w.clock.setTimer(() => panelMain(w.ctx({ trigger: 'button', panelAction: 'stop' })), 600);
+  const result = await w.clock.drive(pending);
+  assert.equal(result.resources[0].stopReason, 'stopped-by-user');
+  assert.equal(w.backend.data[S.KEYS.lease], undefined);
+  assert.equal(w.cdn.inflight(), 0);
+});

@@ -4,7 +4,7 @@ const S = require('../core/state');
 const { version } = require('../../package.json');
 const { formatAge, formatBytes, formatMbps, shortHost } = require('../core/format');
 const { loadConfig, ensureMeta, currentNetwork } = require('./context');
-const { runAction, normalizeAction } = require('./runner');
+const { normalizeAction } = require('../core/actions');
 
 // Control panel (design §12). A periodic refresh only renders cached state;
 // probing starts solely when the user taps the panel's refresh button.
@@ -18,6 +18,7 @@ const STATUS_TEXT = {
   'object-too-small': '资源过小，跳过测速',
   'insufficient-budget': '预算不足以完成确认',
   aborted: '已中止',
+  failed: '任务异常结束，可稍后重试',
   disabled: '模块已关闭',
   paused: '改写已暂停',
   'manual-mode': '手动模式，未运行',
@@ -47,6 +48,9 @@ const STOP_TEXT = {
   'no-valid-sample': '样本或网络无效',
   'native-invalid': '原生样本失效',
   'pool-saturated': '并发名额被占满',
+  'unsafe-response': '响应超出请求范围，已停止后续下载',
+  'lease-lost': '任务已失去运行权',
+  'internal-error': '任务异常',
 };
 
 const MEDIA_TEXT = { video: '视频', audio: '音频', unknown: '媒体' };
@@ -75,6 +79,21 @@ function render(ctx, actionResult, title) {
   if (!config.enabled) head += ' · 已关闭';
   else if (control.paused) head += ' · 已暂停';
   lines.push(head);
+  if (ctx.environment && ctx.environment.system === 'iOS') {
+    lines.push('iOS 并发限制 · 粗筛最多 2 · 复筛与确认串行');
+  }
+  const lease = store.readJson(S.KEYS.lease, null);
+  const progress = store.readJson(S.KEYS.progress, null);
+  if (lease && lease.runId && lease.expiresAt > now) {
+    const seconds = Math.max(1, Math.ceil((lease.expiresAt - now) / 1000));
+    const phaseNames = { starting: '准备', preflight: '原生预检', coarse: '粗筛', rescue: '补测', refine: '复筛', confirm: '确认' };
+    lines.push('任务占用中 · 锁最迟 ' + seconds + ' 秒后到期；可点“停止测速”');
+    if (progress && progress.runId === lease.runId) {
+      lines.push('进度：' + (phaseNames[progress.phase] || progress.phase) + ' · 已完成 ' + progress.completed + ' / 已启动 ' + progress.started);
+    }
+  } else if (lease && lease.runId) {
+    lines.push('上次任务未正常释放，锁已过期；下次点击可自动恢复');
+  }
   const env = ctx.environment || {};
   lines.push('CDN Picker v' + version + ' · Surge ' + (env['surge-version'] || '未知') + ' · ' + (env.system || '未知系统'));
 
@@ -162,9 +181,10 @@ function sumBudgets(resources) {
 // ctx: runner ctx plus {trigger, panelAction}
 async function panelMain(ctx) {
   const panelAction = normalizeAction(ctx.panelAction, 'quick');
-  const title = panelAction === 'full' ? 'B站 CDN · 完整探索' : 'B站 CDN';
+  const title = panelAction === 'full' ? 'B站 CDN · 完整探索' : panelAction === 'stop' ? 'B站 CDN · 停止测速' : 'B站 CDN';
   let result = null;
   if (['button', 'editor', 'intent'].includes(ctx.trigger) && panelAction !== 'status') {
+    const { runAction } = require('./runner');
     result = await runAction(Object.assign({}, ctx, { action: panelAction }));
   }
   return render(ctx, result, title);

@@ -153,10 +153,11 @@ test('rejected samples (range ignored, HTML, redirect) never rank', async () => 
   const s = session(clock, cdn);
   const result = await clock.drive(s.runQuick([NATIVE].concat(SG), () => []));
   for (const h of SG.slice(0, 5)) {
-    assert.equal(result.measurements[h].coarse, undefined, h);
+    assert.equal(result.measurements[h] && result.measurements[h].coarse, undefined, h);
   }
   const kinds = result.failures.map((f) => f.kind).sort();
-  assert.deepEqual(kinds, ['error-body', 'length-mismatch', 'range-ignored', 'range-mismatch', 'redirect']);
+  assert.ok(kinds.includes('range-ignored'));
+  assert.equal(result.stopReason, 'unsafe-response', 'do not continue scanning after an unbounded response');
   assert.ok(result.budget.overrunCount >= 1, 'Range-ignoring host overran its reservation');
   assert.ok(![SG[0], SG[1], SG[2], SG[3], SG[4]].includes(result.winner && result.winner.host));
 });
