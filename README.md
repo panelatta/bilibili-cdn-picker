@@ -20,6 +20,10 @@
 
 ## 安装
 
+手机直接安装：[远程模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.remote.sgmodule) · [一键导入 Surge](surge:///install-module?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpanelatta%2Fbilibili-cdn-picker%2Fmain%2Fsurge%2FBilibiliCDNPicker.remote.sgmodule)。在 Surge 的模块管理中选择通过 URL 安装，粘贴远程模块地址并启用即可，无需复制本地 JS 文件。远程版脚本固定到已验证提交 `a425c80fe70f216d05a7fefea3123824217e47af`（v0.3.1）。
+
+第一次使用先完成[手机首轮验证](docs/runtime-experiments.md#手机首轮验证)，再考虑开启自动模式。以下为手工部署方式：
+
 1. 准备脚本。项目已包含构建好的 `surge/` 目录；修改源码后运行 `node tools/build.mjs` 重新生成。
 2. 选择一种安装方式：
    - 本地模块：把 `surge/` 中的 6 个文件复制到 Surge 配置目录（通常为 iCloud Drive 的 Surge 文件夹），在 Surge 的模块列表中启用 Bilibili CDN Picker。
