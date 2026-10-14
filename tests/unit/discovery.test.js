@@ -233,7 +233,7 @@ test('full exploration covers all 299 candidates and confirms the top 5', async 
   assert.ok(result.durationMs < 60000);
 });
 
-test('full exploration hitting the deadline is partial', async () => {
+test('full exploration reserves later stages and reports partial coverage', async () => {
   const clock = new FakeClock();
   const cdn = createCdn(clock, {}, { mbps: 2, latencyMs: 300 });
   const s = session(clock, cdn, { mode: 'full', deadlineMs: 8000 });
@@ -241,7 +241,24 @@ test('full exploration hitting the deadline is partial', async () => {
   assert.equal(result.complete, false);
   assert.equal(result.partial, true);
   assert.ok(result.coverage.started < 300);
-  assert.equal(result.stopReason, 'deadline');
+  assert.equal(result.stopReason, 'phase-budget');
+});
+
+test('iOS full exploration with many timeouts still confirms a usable candidate', async () => {
+  const clock = new FakeClock();
+  const cdn = createCdn(clock, { [NATIVE]: { kind: 'ok', mbps: 100, latencyMs: 20 }, [WUHAN]: { kind: 'ok', mbps: 300, latencyMs: 10 } }, { kind: 'timeout' });
+  const s = session(clock, cdn, { mode: 'full', overrides: { discoveryConcurrency: 2, refineConcurrency: 1, confirmConcurrency: 1 } });
+  const result = await clock.drive(s.runFull([WUHAN].concat(registry.diversityOrder)));
+  assert.ok(result.winner && result.winner.score > 80);
+  assert.ok(result.stages.find((x) => x.stage === 'confirm').dispatched > 0);
+  assert.equal(result.partial, true);
+  assert.equal(result.complete, false);
+  assert.equal(result.stopReason, 'phase-budget');
+  assert.ok(result.coverage.started < result.coverage.eligible);
+  assert.ok(result.durationMs < 60000);
+  assert.ok(cdn.peak() <= 2);
+  const confirm = cdn.calls.find((c) => c.end - c.start + 1 === 4 * MiB);
+  assert.ok(confirm, 'retain the original 4 MiB confirmation, not a smaller substitute');
 });
 
 test('full exploration stops exactly when the budget is exhausted', async () => {

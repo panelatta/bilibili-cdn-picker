@@ -63,10 +63,11 @@ class DiscoverySession {
 
   // ---- probe plumbing -------------------------------------------------------
 
-  abortReason(timeoutMs) {
+  abortReason(timeoutMs, stageDeadlineAt) {
     const external = this.shouldAbort();
     if (external) return external;
     if (this.now() + (timeoutMs || 0) + DEADLINE_MARGIN_MS > this.deadlineAt) return 'deadline';
+    if (stageDeadlineAt && this.now() + (timeoutMs || 0) + DEADLINE_MARGIN_MS > stageDeadlineAt) return 'phase-budget';
     return null;
   }
 
@@ -75,8 +76,8 @@ class DiscoverySession {
     return Math.max(0, Math.min(bytes, this.objectLength - start));
   }
 
-  launchProbe(host, stage, rangeStart, rangeBytes, timeoutMs, keepBack) {
-    const stop = this.abortReason(timeoutMs);
+  launchProbe(host, stage, rangeStart, rangeBytes, timeoutMs, keepBack, stageDeadlineAt) {
+    const stop = this.abortReason(timeoutMs, stageDeadlineAt);
     if (stop) return { stop };
     if (rangeBytes <= 0) return { skip: 'empty-range' };
     const token = this.budget.reserve(rangeBytes, keepBack);
@@ -130,6 +131,7 @@ class DiscoverySession {
     const m = this.measurements[result.host] || (this.measurements[result.host] = { attempts: 0, successes: 0 });
     m.attempts++;
     m.lastKind = result.kind;
+    m.lastStage = result.stage;
     if (result.objectLength && this.objectLength === null) this.objectLength = result.objectLength;
     if (result.ok) {
       m.successes++;
@@ -168,7 +170,7 @@ class DiscoverySession {
         const timeoutMs = tracker ? tracker.timeoutFor(index) : params.timeoutMs;
         const start = typeof params.rangeStart === 'function' ? params.rangeStart(item.host) : params.rangeStart || 0;
         const bytes = this.clampRange(start, params.rangeBytes);
-        return this.launchProbe(item.host, name, start, bytes, timeoutMs, params.keepBack || 0);
+        return this.launchProbe(item.host, name, start, bytes, timeoutMs, params.keepBack || 0, params.deadlineAt);
       },
       onResult: (result) => {
         results.push(result);
@@ -231,7 +233,7 @@ class DiscoverySession {
     return { result: r };
   }
 
-  async coarse(hosts, concurrency, k, keepBack) {
+  async coarse(hosts, concurrency, k, keepBack, deadlineAt) {
     const cfg = this.config;
     const cutoff = new CutoffTracker({
       initialMs: cfg.coarseTimeoutMs,
@@ -243,6 +245,7 @@ class DiscoverySession {
     });
     const stageResult = await this.stage({
       name: 'coarse',
+      deadlineAt,
       hosts,
       concurrency,
       rangeStart: 0,
@@ -256,7 +259,7 @@ class DiscoverySession {
 
   // Conservative rescue round when almost nothing completed (design §7.4):
   // native first, a few timed-out hosts, one wider timeout.
-  async rescueIfNeeded(coarseResults, keepBack) {
+  async rescueIfNeeded(coarseResults, keepBack, deadlineAt) {
     const started = coarseResults.length;
     const valid = coarseResults.filter((r) => r.ok).length;
     const lowSuccess = valid === 0 || (started >= 5 && valid / started < 0.2);
@@ -266,6 +269,7 @@ class DiscoverySession {
     timedOut.sort((a, b) => (a === this.nativeHost ? -1 : b === this.nativeHost ? 1 : 0));
     const { results } = await this.stage({
       name: 'rescue',
+      deadlineAt,
       hosts: timedOut.slice(0, 4),
       concurrency: Math.min(2, this.config.refineConcurrency),
       rangeStart: 0,
@@ -276,7 +280,7 @@ class DiscoverySession {
     return results;
   }
 
-  async refine(hosts, k, keepBack) {
+  async refine(hosts, k, keepBack, deadlineAt) {
     const cfg = this.config;
     const cutoff = new CutoffTracker({
       initialMs: cfg.refineTimeoutMs,
@@ -288,6 +292,7 @@ class DiscoverySession {
     });
     return this.stage({
       name: 'refine',
+      deadlineAt,
       hosts,
       concurrency: Math.min(cfg.refineConcurrency, this.cellular ? cfg.cellularConcurrency : 20),
       rangeStart: 0,
@@ -476,6 +481,8 @@ class DiscoverySession {
       batch.forEach((h) => { offered[h] = true; });
       round++;
     }
+    const finalAbort = this.shouldAbort();
+    if (finalAbort) stopReason = finalAbort;
     const winner = best ? this.settleWinner(best, backups) : null;
     return this.finish(null, winner, backups, stopReason, Object.keys(offered).length);
   }
@@ -503,9 +510,17 @@ class DiscoverySession {
 
     const hosts = orderedHosts.filter((h) => h !== this.nativeHost);
     const concurrency = this.cellular ? cfg.cellularConcurrency : cfg.discoveryConcurrency;
-    const coarse = await this.coarse(hosts, concurrency, coarseTop, keepCoarse);
+    // Keep the same sample sizes and Top K, but reserve wall-clock time for
+    // the decision-producing stages instead of spending the whole run on coarse.
+    const remainingMs = Math.max(0, this.deadlineAt - this.now());
+    const confirmReserveMs = Math.min(remainingMs / 3, refineTop * cfg.confirmTimeoutMs / cfg.confirmConcurrency);
+    const laterReserveMs = Math.min(remainingMs / 2,
+      coarseTop * cfg.refineTimeoutMs / Math.min(cfg.refineConcurrency, this.cellular ? cfg.cellularConcurrency : 20) + confirmReserveMs);
+    const coarseDeadlineAt = this.deadlineAt - laterReserveMs;
+    const refineDeadlineAt = this.deadlineAt - confirmReserveMs;
+    const coarse = await this.coarse(hosts, concurrency, coarseTop, keepCoarse, coarseDeadlineAt);
     const coarseResults = (pre.result ? [pre.result] : []).concat(coarse.results);
-    await this.rescueIfNeeded(coarseResults, keepCoarse);
+    await this.rescueIfNeeded(coarseResults, keepCoarse, coarseDeadlineAt);
     let stopReason = coarse.outcome.stopReason === 'exhausted' ? null : coarse.outcome.stopReason;
     const external = this.shouldAbort();
     if (external) stopReason = external;
@@ -515,7 +530,7 @@ class DiscoverySession {
     if (!external) {
       const ranked = this.validCoarse(orderedHosts).slice(0, coarseTop).map((x) => x.host);
       if (ranked.length) {
-        const refineStage = await this.refine(ranked, refineTop, refineTop * f);
+        const refineStage = await this.refine(ranked, refineTop, refineTop * f, refineDeadlineAt);
         if (refineStage.outcome.stopReason !== 'exhausted') stopReason = stopReason || refineStage.outcome.stopReason;
         const refined = this.validRefine(ranked).slice(0, refineTop).map((x) => x.host);
         const confirmStage = await this.confirm(refined, f, (res) => {
@@ -531,6 +546,8 @@ class DiscoverySession {
         backups = confirmed.slice(1).map((x) => ({ host: x.host, mbps: x.score, confirmed: true }));
       }
     }
+    const finalAbort = this.shouldAbort();
+    if (finalAbort) stopReason = finalAbort;
     const winner = best ? this.settleWinner(best, backups) : null;
     return this.finish(null, winner, backups, stopReason, orderedHosts.length);
   }

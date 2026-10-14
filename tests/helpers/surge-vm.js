@@ -52,6 +52,7 @@ function createDevice(options) {
       const context = vm.createContext(Object.assign({
         console: { log: (line) => logs.push(String(line)) },
         setTimeout,
+        crypto: require('node:crypto').webcrypto,
         $done: (value) => {
           doneCount++;
           if (doneCount === 1) setImmediate(() => resolve({ value, doneCount: () => doneCount }));

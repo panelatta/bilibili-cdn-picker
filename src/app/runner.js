@@ -14,6 +14,7 @@ const { adapterById } = require('../media/adapters');
 const S = require('../core/state');
 const { loadConfig, ensureMeta, currentNetwork } = require('./context');
 const { applyMobileLimits } = require('../core/mobile-limits');
+const { resultRows } = require('../core/result-view');
 const { ACTIONS, normalizeAction } = require('../core/actions');
 
 // Discovery Runner (design §4.2). Runs as its own script session (panel tap,
@@ -113,6 +114,7 @@ async function runDiscovery(ctx, requested, config, warnings) {
   const meta = ensureMeta(store, startedAt, rng);
   const net = currentNetwork(ctx.network(), meta, config);
   summary.network = net.label;
+  summary.networkKey = net.key;
   summary.networkType = net.type;
   if (net.cellular && !config.cellularDiscovery && (automatic || action === 'full')) return early('cellular-blocked');
 
@@ -146,7 +148,7 @@ async function runDiscovery(ctx, requested, config, warnings) {
     (!profile.lastFullScanAt || startedAt - profile.lastFullScanAt > config.fullScanTtlSeconds * 1000) &&
     (!profile.lastFullAttemptAt || startedAt - profile.lastFullAttemptAt > config.fullRetrySeconds * 1000);
   const mode = action === 'full' || fullDue ? 'full' : 'quick';
-  const picked = pickTargets({ samples, decisions, failures, state, net, now: startedAt, config, action, mode, registry });
+  const picked = pickTargets({ samples, decisions, failures, state, net, now: startedAt, config, action, mode, registry, resourceKey: ctx.resourceKey });
   if (!picked.targets.length) return early(picked.reason, { network: net.label });
 
   const runId = randomId(10, rng) + '-' + startedAt;
@@ -198,7 +200,7 @@ const MEDIA_ORDER = { video: 0, unknown: 1, audio: 2 };
 
 function pickTargets(p) {
   const { samples, decisions, failures, state, net, now, config, action, mode } = p;
-  const all = Object.keys(samples.items).map((k) => samples.items[k]);
+  const all = Object.keys(samples.items).map((k) => samples.items[k]).filter((s) => !p.resourceKey || s.key === p.resourceKey);
   if (!all.length) return { targets: [], reason: 'no-sample' };
   const fresh = all.filter((s) => s.networkKey === net.key && s.expiresAt > now && adapterById(s.adapter));
   if (!fresh.length) return { targets: [], reason: 'no-fresh-sample' };
@@ -256,18 +258,18 @@ function makeAbortCheck(ctx, store, config, meta, net, startedAt, runId) {
   return function abortCheck() {
     if (sticky) return sticky;
     const now = ctx.now();
+    // A web stop must take effect before the next dispatch, including during
+    // a burst of fast failures. Only the more expensive identity check is throttled.
+    const control = S.loadControl(store);
+    if (control.stopRequestedAt && control.stopRequestedAt >= startedAt) return (sticky = 'stopped-by-user');
+    if (control.paused) return (sticky = 'paused');
     if (now - lastCheck < 500) return null;
     lastCheck = now;
     const owner = store.readJson(S.KEYS.lease, null);
     if (!owner || owner.runId !== runId) return (sticky = 'lease-lost');
-    const control = S.loadControl(store);
-    if (control.stopRequestedAt && control.stopRequestedAt >= startedAt) sticky = 'stopped-by-user';
-    else if (control.paused) sticky = 'paused';
-    else {
-      const meta2 = S.loadMeta(store);
-      if (meta2.generation !== meta.generation) sticky = 'network-changed';
-      else if (currentNetwork(ctx.network(), meta2, config).key !== net.key) sticky = 'network-changed';
-    }
+    const meta2 = S.loadMeta(store);
+    if (meta2.generation !== meta.generation) sticky = 'network-changed';
+    else if (currentNetwork(ctx.network(), meta2, config).key !== net.key) sticky = 'network-changed';
     return sticky;
   };
 }
@@ -314,19 +316,36 @@ function reportProgress(run, name, fields, mediaType) {
   const changed = fields.stage && fields.stage !== p.phase;
   if (fields.stage) p.phase = fields.stage;
   p.mediaType = mediaType;
-  if (name === 'probe_started') p.started++;
-  if (name === 'probe_completed' || name === 'probe_rejected') p.completed++;
+  if (name === 'probe_started') {
+    p.started++;
+    if (fields.host && !run.seenHosts[fields.host]) { run.seenHosts[fields.host] = true; p.nodesStarted++; }
+  }
+  if (name === 'probe_completed' || name === 'probe_rejected') {
+    p.completed++;
+    const m = run.liveMeasurements[fields.host] || (run.liveMeasurements[fields.host] = {});
+    m.lastKind = name === 'probe_completed' ? 'ok' : fields.kind;
+    m.lastStage = fields.stage;
+    if (name === 'probe_completed') {
+      const stage = ['refine', 'confirm'].includes(fields.stage) ? fields.stage : 'coarse';
+      m[stage] = { mbps: fields.mbps, elapsedMs: fields.elapsedMs, bytes: fields.bytes };
+    } else if (fields.stage === 'confirm') m.confirmFailed = true;
+  }
   const now = run.ctx.now();
   if (!changed && p.updatedAt && now - p.updatedAt < 1000) return;
   const owner = run.store.readJson(S.KEYS.lease, null);
   if (!owner || owner.runId !== run.runId) return;
   p.updatedAt = now;
+  p.results = resultRows(run.liveMeasurements, 20);
   run.store.writeJson(S.KEYS.progress, p);
 }
 
 async function runForResource(run, target, mode) {
   const { ctx, config, net, registry, profile, logger } = run;
   const now = ctx.now();
+  run.liveMeasurements = {};
+  run.seenHosts = {};
+  Object.assign(run.progress, { resourceKey: target.key, representationId: target.representationId,
+    started: 0, completed: 0, nodesStarted: 0, results: [] });
   const adapter = adapterById(target.adapter);
   const ttlMs = (net.known ? config.historyTtlSeconds : config.unknownNetworkTtlSeconds) * 1000;
   profile.cooldowns = pruneCooldowns(profile.cooldowns, now);
@@ -403,6 +422,7 @@ async function runForResource(run, target, mode) {
       expansionCursor = b.cursor;
       return b.hosts;
     };
+    run.progress.candidates = sl.hosts.length;
     result = await session.runQuick(sl.hosts.map((x) => x.host), nextBatch);
     profile.exploreCursor = expansionCursor;
   } else {
@@ -414,6 +434,7 @@ async function runForResource(run, target, mode) {
     const ordered = fullExplorationOrder(target.nativeHost, primary, rotate(order, cursor), 3)
       .filter((h) => h === target.nativeHost || !isEligible(h));
     shortlistInfo = { size: ordered.length, skipped: order.length + 1 - ordered.length, sources: null };
+    run.progress.candidates = ordered.length;
     result = await session.runFull(ordered);
     profile.exploreCursor = (cursor + 1) % Math.max(1, order.length);
   }
@@ -421,6 +442,8 @@ async function runForResource(run, target, mode) {
   const commit = commitResult(run, target, result, mode);
   return {
     key: target.key.slice(0, 10),
+    resourceKey: target.key,
+    results: resultRows(result.measurements, 30),
     mediaType: target.mediaType,
     representationId: target.representationId,
     nativeHost: target.nativeHost,

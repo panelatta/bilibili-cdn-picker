@@ -37,13 +37,19 @@ test('module file: scripts exist, patterns match only supported media, arguments
   assert.ok(used.length > 0);
   used.forEach((name) => assert.ok(declared.includes(name), name));
   const scripts = text.split('\n').filter((l) => /^BiliCDN-\w+ = type=/.test(l));
-  assert.equal(scripts.length, 8);
+  assert.equal(scripts.length, 9);
   scripts.forEach((line) => {
     const scriptPath = /script-path=([^,\s]+)/.exec(line)[1];
     assert.ok(fs.existsSync(path.join(SURGE_DIR, scriptPath)), scriptPath);
     const pm = /pattern=([^,\s]+)/.exec(line);
     if (pm) {
       const re = new RegExp(pm[1]);
+      if (line.startsWith('BiliCDN-Web ')) {
+        assert.ok(re.test('https://bcp.test/api/status'));
+        assert.ok(!re.test('https://bcp.test.evil.example/api/status'));
+        assert.ok(!re.test(freshUrl()));
+        return;
+      }
       assert.ok(re.test(freshUrl()));
       assert.ok(re.test(freshUrl().replace(NATIVE, 'upos-hz-mirrorakam.akamaized.net')));
       assert.ok(!re.test(freshUrl().replace(NATIVE, 'xy1x2x3x4xy.mcdn.bilivideo.cn')));
@@ -52,8 +58,8 @@ test('module file: scripts exist, patterns match only supported media, arguments
     }
   });
   const panels = text.split('\n').filter((l) => /script-name=/.test(l));
-  assert.equal(panels.length, 3);
-  assert.match(text, /hostname = %APPEND% upos-\*\.bilivideo\.com, cn-\*\.bilivideo\.com, ec-\*\.bilivideo\.com, upos-\*\.akamaized\.net/);
+  assert.equal(panels.length, 1);
+  assert.match(text, /hostname = %APPEND% bcp.test, upos-\*\.bilivideo\.com, cn-\*\.bilivideo\.com, ec-\*\.bilivideo\.com, upos-\*\.akamaized\.net/);
 });
 
 test('Surge flow with bundles: capture, panel tap, rewrite, 403 fallback', async () => {

@@ -51,6 +51,7 @@ const STOP_TEXT = {
   'unsafe-response': '响应超出请求范围，已停止后续下载',
   'lease-lost': '任务已失去运行权',
   'internal-error': '任务异常',
+  'phase-budget': '已为复筛和确认保留时间',
 };
 
 const MEDIA_TEXT = { video: '视频', audio: '音频', unknown: '媒体' };
@@ -161,6 +162,7 @@ function render(ctx, actionResult, title) {
   const decided = Object.keys(decisions.items).some((k) => decisions.items[k].networkKey === net.key && decisions.items[k].expiresAt > now);
   if (!config.enabled || control.paused) style = 'alert';
   else if (warnings.length) style = 'alert';
+  else if (lastRun && lastRun.stopReason && !['target-reached', 'completed', 'candidates-exhausted'].includes(lastRun.stopReason)) style = 'alert';
   else if (decided) style = 'good';
   return { title, content: lines.join('\n'), style };
 }
@@ -186,6 +188,12 @@ async function panelMain(ctx) {
   if (['button', 'editor', 'intent'].includes(ctx.trigger) && panelAction !== 'status') {
     const { runAction } = require('./runner');
     result = await runAction(Object.assign({}, ctx, { action: panelAction }));
+  }
+  if (ctx.panelDisplay && panelAction === 'status') {
+    const lease = ctx.store.readJson(S.KEYS.lease, null);
+    const active = lease && lease.expiresAt > ctx.now();
+    return { title: 'B站 CDN · 网页管理', style: 'info',
+      content: 'Safari 打开 https://bcp.test\n' + (active ? '测速进行中，请在网页查看进度或停止' : '在网页选择视频或音频，查看结果与管理设置') };
   }
   return render(ctx, result, title);
 }

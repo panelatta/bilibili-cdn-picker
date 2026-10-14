@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#101b25"><meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="CDN Picker">
+<meta name="bcp-token" content="__BCP_TOKEN__">
+<title>CDN Picker · 本机控制台</title>
+<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg"><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<header class="topbar">
+ <a class="brand" href="/" aria-label="CDN Picker 首页"><img src="/icon.svg" alt="" width="38" height="38"><span>CDN <strong>Picker</strong><small>本机播放优化</small></span></a>
+ <button class="icon-button" id="settings-open" aria-label="打开设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg></button>
+</header>
+<div class="connection"><span class="dot" id="connection-dot"></span><span id="connection-text">正在连接 Surge…</span><span id="version" class="version"></span></div>
+<div id="notice" class="notice" role="status" hidden></div>
+<main>
+<section class="hero card" aria-labelledby="current-title">
+ <div class="section-top"><span class="eyebrow">当前资源</span><div class="segments" role="group" aria-label="选择媒体类型"><button id="tab-video" aria-pressed="true">视频</button><button id="tab-audio" aria-pressed="false">音频</button></div></div>
+ <div class="hero-title"><h1 id="current-title">先播放一段视频</h1><span class="badge neutral" id="current-badge">等待样本</span></div>
+ <p id="current-explanation" class="description">在 B 站播放约 10 秒，再回到这里选择更合适的线路。</p>
+ <div class="route-box"><span class="route-label" id="route-label">媒体请求主机</span><strong id="current-host" class="hostname">尚未收到样本</strong><span id="sample-meta" class="muted">仅在这台设备上采样和测速</span></div>
+ <div class="metrics"><div><span>确认速率</span><strong id="current-speed">—</strong></div><div><span>目标速率</span><strong id="target-speed">—</strong></div><div><span>选择有效期</span><strong id="decision-ttl">—</strong></div></div>
+ <div class="actions"><button class="primary" id="quick" disabled><span>优化当前视频</span><span aria-hidden="true">↗</span></button><button class="secondary" id="full" disabled>探索更多节点</button></div>
+ <p id="action-hint" class="hint">优先测试地区推荐和本机历史，不会每次扫描全部节点。</p>
+</section>
+<section id="job-card" class="card job-card" aria-labelledby="job-title" hidden>
+ <div class="section-top"><span class="eyebrow" id="job-title">测速进行中</span><button class="text-button danger" id="stop">停止测速</button></div>
+ <div class="job-heading"><h2 id="job-phase">正在准备</h2><span id="job-elapsed" class="mono"></span></div>
+ <div class="steps" aria-label="测速阶段"><span data-phase="coarse">01 粗筛</span><span data-phase="refine">02 复筛</span><span data-phase="confirm">03 确认</span></div>
+ <progress id="job-progress" aria-label="候选探索进度"></progress>
+ <div class="job-counts"><span id="job-counts">等待结果</span><span id="job-updated"></span></div>
+ <p class="hint">请保持此页在前台。停止后会等待已发出的请求结束。</p>
+</section>
+<section class="card report-card" aria-labelledby="report-title">
+ <div class="section-top"><span class="eyebrow" id="report-title">本次结果</span><span id="report-badge" class="badge neutral">尚未测速</span></div>
+ <h2 id="report-summary">还没有当前视频的结果</h2><p id="report-detail" class="description">视频和音频分别选择，音频的好成绩不会代表视频已经优化。</p>
+ <div id="report-metrics" class="report-metrics" hidden><div><small>有效 / 已测 / 候选</small><strong id="coverage">—</strong></div><div><small>额外下载</small><strong id="traffic">—</strong></div></div>
+ <p id="traffic-note" class="hint" hidden></p>
+ <div id="results-empty" class="empty"><svg viewBox="0 0 64 44" aria-hidden="true"><path d="M5 34h54M12 28V17m13 11V6m14 22V13m13 15V3"/></svg><span>启动测速后，候选成绩会在这里更新。</span></div>
+ <div class="table-wrap" id="results-wrap" hidden><table><thead><tr><th>候选节点</th><th>有效速率</th><th>结果</th></tr></thead><tbody id="results"></tbody></table></div>
+</section>
+<section class="card history-card">
+ <details id="history-details"><summary><span><span class="eyebrow">网络历史</span><strong>这个网络上的已确认线路</strong></span><span id="history-count" class="badge neutral">0</span></summary>
+ <p class="description">用于下次筛选候选。其他视频的历史成绩，不保证适用于当前资源。</p><div id="history" class="history-list"></div></details>
+</section>
+<section class="explain"><details><summary>这次优化到底做了什么？<span>＋</span></summary><p>它比较同一媒体资源在不同 CDN 上的下载表现，只将后续新请求切到已确认可用的线路。如果原生线路已够快，会保留原生；如果仅完成粗筛，没有确认结果，就不会宣称已加速。</p><p>速率是有限样本的有效下载速度，不是播放体验保证。确认实际收益，仍要看测速结束后的缓冲次数和拖动恢复时间。</p></details></section>
+</main>
+<footer><span>数据与控制都留在本机</span><button class="text-button" id="install-help">添加到主屏幕 ↗</button></footer>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<dialog id="settings-dialog"><form id="settings-form" method="dialog">
+ <div class="dialog-head"><div><span class="eyebrow">偏好设置</span><h2>让选择适合你的网络</h2></div><button type="button" class="icon-button" id="settings-close" aria-label="关闭设置">✕</button></div>
+ <label class="toggle-row"><span>启用 CDN 优化<small>关闭后媒体请求保持原样</small></span><input id="setting-enabled" type="checkbox" role="switch"></label>
+ <div class="form-row"><label for="setting-region">地区推荐</label><select id="setting-region"><option value="SG">新加坡</option><option value="TW">台湾</option><option value="HK">香港</option><option value="JP">日本</option><option value="AU">澳大利亚</option><option value="US">美国</option><option value="NONE">不使用地区推荐</option></select><small>按出口地区的推荐表预筛，不按机房距离过滤。</small></div>
+ <div class="form-row"><label for="setting-target">目标速率 · Mbps</label><input type="number" id="setting-target" min="1" max="2000" step="1" required><small>确认达到目标后，快速选择可以提前结束。</small></div>
+ <div class="form-row"><label for="setting-mode">测速触发</label><select id="setting-mode"><option value="manual">手动 · 点击开始</option><option value="adaptive">自动 · 新资源触发（实验）</option></select><small>自动模式需要先通过手机端任务生命周期验证。</small></div>
+ <div class="form-row"><label for="setting-history">历史结果使用方式</label><select id="setting-history"><option value="conservative">谨慎 · 当前资源确认后再切换</option><option value="optimistic">优先尝试历史赢家</option></select></div>
+ <label class="toggle-row"><span>允许蜂窝自动与完整探索<small>会额外消耗移动数据</small></span><input type="checkbox" role="switch" id="setting-cellular"></label>
+ <label class="toggle-row"><span>记录诊断日志<small>本机脱敏日志，不上传</small></span><input type="checkbox" role="switch" id="setting-debug"></label>
+ <p class="hint" id="settings-limits"></p>
+ <button class="primary wide" type="submit" id="save-settings">保存设置</button>
+ <div class="settings-tools"><button class="secondary" type="button" id="pause">暂停改写</button><button class="text-button danger" type="button" id="clear-network">清除本网络选择与历史</button></div>
+</form></dialog>
+<dialog id="confirm-dialog"><div class="dialog-head"><h2 id="confirm-title">确认操作</h2></div><p id="confirm-message" class="description"></p><div class="confirm-actions"><button class="secondary" id="confirm-cancel">取消</button><button class="primary" id="confirm-ok">继续</button></div></dialog>
+<dialog id="install-dialog"><div class="dialog-head"><h2>放到 iPhone 主屏幕</h2><button class="icon-button" id="install-close" aria-label="关闭安装说明">✕</button></div><ol><li>在 Safari 打开 <strong>https://bcp.test</strong></li><li>点分享按钮，选择“添加到主屏幕”</li><li>以后点图标打开控制台</li></ol><p class="description">使用时需要 Surge 正在运行且本模块已启用。网页不提供离线测速。</p></dialog>
+</body></html>

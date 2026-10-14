@@ -5,23 +5,24 @@
 #!arguments-desc=ENABLED 总开关；MODE=manual|adaptive（adaptive 需先完成生命周期实验）；REGION 为出口地区推荐表（SG/TW/HK/JP/AU/US/NONE）；TARGET_MBPS 为未知码率时的足够快目标；HISTORY_POLICY=conservative|optimistic；CELLULAR_DISCOVERY 允许蜂窝自动/完整探索；ROUTE_REVISION 在更换代理出口后修改以隔离历史；PROBE_POLICY 为测速使用的策略名（留空则按规则）；DEBUG 输出脱敏调试日志。
 
 [General]
-force-http-engine-hosts = %APPEND% upos-*.bilivideo.com:80, cn-*.bilivideo.com:80, ec-*.bilivideo.com:80, upos-*.akamaized.net:80
+force-http-engine-hosts = %APPEND% bcp.test:80, upos-*.bilivideo.com:80, cn-*.bilivideo.com:80, ec-*.bilivideo.com:80, upos-*.akamaized.net:80
+
+[Host]
+bcp.test = 127.0.0.1
 
 [Script]
+BiliCDN-Web = type=http-request, pattern=^https?://bcp\.test(?::(?:80|443))?/, requires-body=true, max-size=16384, engine=webview, timeout=75, script-path=@@BASE@@web-control.js, argument="@@ARGS@@"
 BiliCDN-Router = type=http-request, pattern=@@PATTERN@@, requires-body=false, debug={{{DEBUG}}}, engine=jsc, timeout=5, script-path=@@BASE@@request-router.js, argument="@@ARGS@@"
 BiliCDN-Observer = type=http-response, pattern=@@PATTERN@@, requires-body=false, debug={{{DEBUG}}}, engine=jsc, timeout=5, script-path=@@BASE@@response-observer.js, argument="@@ARGS@@"
 BiliCDN-Runner = type=cron, cronexp="*/15 * * * *", engine=webview, timeout=75, script-path=@@BASE@@discovery-runner.js, argument="@@ARGS@@"
-BiliCDN-Panel = type=generic, engine=webview, timeout=75, script-path=@@BASE@@control-panel.js, argument="@@ARGS@@&action=quick"
+BiliCDN-Panel = type=generic, engine=webview, timeout=75, script-path=@@BASE@@control-panel.js, argument="@@ARGS@@&action=status"
 BiliCDN-Explore = type=generic, engine=webview, timeout=75, script-path=@@BASE@@control-panel.js, argument="@@ARGS@@&action=full"
 BiliCDN-Stop = type=generic, engine=webview, timeout=5, script-path=@@BASE@@control-panel.js, argument="@@ARGS@@&action=stop"
 BiliCDN-Diagnostics = type=generic, engine=webview, timeout=5, script-path=@@BASE@@control-panel.js, argument="@@ARGS@@&action=status"
 BiliCDN-Network = type=event, event-name=network-changed, engine=jsc, timeout=5, script-path=@@BASE@@network-event.js
 
 [Panel]
-BiliCDN-Status = title="B站 CDN", content="点按刷新按钮：对当前播放资源运行快速选择", style=info, script-name=BiliCDN-Panel, update-interval=60
-BiliCDN-Discovery = title="B站 CDN · 完整探索", content="点按刷新按钮：对当前视频运行完整探索（目标预算 100 MiB、iOS 降低并发，建议仅在 Wi-Fi 下使用）", style=info, script-name=BiliCDN-Explore, update-interval=3600
-
-BiliCDN-StopControl = title="B站 CDN · 停止测速", content="点按刷新按钮停止派发；在途请求结束后释放任务锁", style=info, script-name=BiliCDN-Stop, update-interval=60
+BiliCDN-Status = title="B站 CDN · 网页管理", content="Safari 打开 https://bcp.test · 管理、测速和实时进度", style=info, script-name=BiliCDN-Panel, update-interval=60
 
 [MITM]
-hostname = %APPEND% upos-*.bilivideo.com, cn-*.bilivideo.com, ec-*.bilivideo.com, upos-*.akamaized.net
+hostname = %APPEND% bcp.test, upos-*.bilivideo.com, cn-*.bilivideo.com, ec-*.bilivideo.com, upos-*.akamaized.net

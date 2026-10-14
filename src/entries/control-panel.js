@@ -11,6 +11,7 @@ const e = rt.env();
 panelMain({
   panelAction: e.intentParameter || argumentValue(e.argument, 'action') || 'quick',
   environment: rt.environment(),
+  panelDisplay: !!(e.input && e.input.purpose === 'panel'),
   trigger: e.trigger,
   argument: e.argument,
   network: rt.network,

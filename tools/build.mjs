@@ -24,6 +24,7 @@ const ENTRIES = {
   'discovery-runner.js': 'src/entries/discovery-runner.js',
   'control-panel.js': 'src/entries/control-panel.js',
   'network-event.js': 'src/entries/network-event.js',
+  'web-control.js': 'src/entries/web-control.js',
 };
 const MODULE_TEMPLATE = 'src/module/BilibiliCDNPicker.sgmodule';
 const MODULE_NAME = 'BilibiliCDNPicker.sgmodule';
@@ -50,6 +51,18 @@ if (!/^https:\/\/[^\s",?#]+\/$/.test(baseUrl || '')) {
   console.error('--base-url must be an https URL ending with "/"');
   process.exit(2);
 }
+
+// Pack first-party UI assets as strings. API-only requests never load them.
+const assets = Object.fromEntries(Object.entries({ html: 'index.html', js: 'app.browser.js', css: 'app.css', icon: 'icon.svg' })
+  .map(([key, file]) => [key, readFileSync(resolve(ROOT, 'src/web', file), 'utf8')]));
+new vm.Script(assets.js, { filename: 'app.browser.js' });
+const assetPath = resolve(ROOT, 'src/web/assets.json');
+const assetText = JSON.stringify(assets) + '\n';
+if (check) {
+  if (!existsSync(assetPath) || readFileSync(assetPath, 'utf8') !== assetText) {
+    console.error('Web assets are out of date; run node tools/build.mjs'); process.exit(1);
+  }
+} else writeFileSync(assetPath, assetText);
 
 const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8'));
 const candidates = JSON.parse(readFileSync(resolve(ROOT, 'data/cdn-candidates.json'), 'utf8'));
@@ -145,7 +158,7 @@ if (baseUrl) {
     .replace(/^#!arguments(?:-desc)?=.*\n/gm, '')
     .replace(/\{\{\{(\w+)\}\}\}/g, (_, key) => defaults[key])
     .replace(/argument="([^"]*)"/g, 'argument=$1')
-    .replace('[Panel]\n', '[Panel]\nBiliCDN-Loaded = title="BCP v' + pkg.version + ' 已加载", content="静态安装标记，无需脚本运行。测速请运行 BiliCDN-Panel；诊断请运行 BiliCDN-Diagnostics。", style=info\n');
+    .replace('[Panel]\n', '[Panel]\nBiliCDN-Loaded = title="BCP v' + pkg.version + ' 已加载", content="静态安装标记。Safari 打开 https://bcp.test 管理测速和查看实时进度。", style=info\n');
   validateModule(diagnostic, { remote: true });
   outputs['BilibiliCDNPicker.diagnostic.sgmodule'] = diagnostic;
 }

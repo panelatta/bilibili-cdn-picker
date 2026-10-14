@@ -20,8 +20,8 @@ test('both installable modules have valid arguments, script declarations and pan
     const m = validateModule(text, { remote: isRemote });
     assert.equal(Object.keys(m.defaults).length, 9);
     assert.equal(m.defaults.PROBE_POLICY, '');
-    assert.equal(Object.keys(m.scripts).length, 8);
-    assert.equal(Object.keys(m.panels).length, 3);
+    assert.equal(Object.keys(m.scripts).length, 9);
+    assert.equal(Object.keys(m.panels).length, 1);
     for (const s of Object.values(m.scripts)) {
       const name = isRemote ? path.basename(new URL(s['script-path']).pathname) : s['script-path'];
       assert.ok(fs.existsSync(path.join(root, 'surge', name)), name);
