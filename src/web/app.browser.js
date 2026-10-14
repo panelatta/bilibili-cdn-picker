@@ -2,7 +2,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const token = document.querySelector('meta[name="bcp-token"]').content;
-  let state = null, selectedType = 'video', connected = false, pendingStart = false, pollTimer, pollBusy = false, toastTimer;
+  let state = null, selectedType = 'video', connected = false, pendingStart = false, pollTimer, pollBusy = false, toastTimer, selectedReportKey = null, pendingSince = 0, commandSeq = 0;
   const phases = { starting: '正在准备', preflight: '检查原生线路', coarse: '筛选候选节点', rescue: '补测超时节点', refine: '复筛入围节点', confirm: '确认下载表现' };
   const reasons = { 'target-reached': '达到目标速率', completed: '本轮完成', deadline: '到达总时限', 'phase-budget': '为复筛与确认保留时间',
     budget: '达到目标流量预算', 'unsafe-response': '响应超出请求范围，保护性停止', 'stopped-by-user': '已手动停止',
@@ -11,8 +11,11 @@
   const errors = { 'session-expired': '本机会话已变化，请刷新页面。', busy: '已有测速任务，请等它完成或先停止。',
     'no-sample': '请先在 B 站播放约 10 秒。', 'no-fresh-sample': '样本已过期，请回到视频产生新请求。',
     'sample-invalid': '原生资源已失效，请打开新的视频请求。', 'already-decided': '当前资源已有有效选择。',
-    'cellular-blocked': '当前设置不允许蜂窝完整探索。', disabled: '优化已关闭，请先在设置中启用。', paused: '改写已暂停。',
+    disabled: '优化已关闭，请先在设置中启用。', paused: '改写已暂停。',
     'store-unavailable': 'Surge 本机存储不可写。', 'invalid-setting': '设置值不在支持范围内。', 'select-resource': '请先选择新鲜的视频或音频样本。',
+    'no-confirmed': '测速结束，但没有节点通过确认；请查看候选结果与停止原因。',
+    'no-valid': '测速结束，没有有效节点响应。', 'native-invalid': '原生资源验证失败，请产生新的播放请求后重试。',
+    'aborted': '测速已中止，请查看记录中的停止原因。', 'failed': '测速任务失败，请查看本机脚本日志。',
     'internal-error': '本机脚本运行失败，请查看 Surge 脚本日志。' };
   const statusNames = { ok: '有效', timeout: '超时', forbidden: '403', 'not-found': '404', 'range-ignored': '忽略 Range',
     'rate-limited': '限流', 'server-error': '服务错误', redirect: '重定向', 'error-body': '错误内容',
@@ -37,11 +40,22 @@
     } catch (e) { if (e.name === 'AbortError') throw new Error('等待本机响应超时；任务可能仍在运行，请查看状态。'); throw e; }
     finally { clearTimeout(timer); }
   }
+  function acceptSnapshot(next) {
+    if (!state || next.now >= state.now) state = next;
+  }
+  function feedback(message) { $('action-result').hidden = false; $('action-result').textContent = message; toast(message); }
   async function poll() {
     clearTimeout(pollTimer);
     if (pollBusy || document.hidden) return;
     pollBusy = true;
-    try { state = await api('/api/status'); connected = true; render(); }
+    try { acceptSnapshot(await api('/api/status')); connected = true;
+      // Safari can suspend a long POST while the Surge task completes. Do not
+      // keep the UI blocked by that old promise after the server is idle.
+      if (pendingStart && !state.job.active && Date.now() - pendingSince > 5000) {
+        pendingStart = false;
+        feedback('服务器当前没有运行中的任务，已恢复操作。已完成结果可在测速记录中查看。');
+      }
+      render(); }
     catch (e) {
       connected = false; $('connection-dot').className = 'dot offline'; $('connection-text').textContent = '暂时无法连接本机 Surge';
       $('notice').hidden = false; $('notice').textContent = e.message.includes('会话') ? e.message : '请保持 Surge 运行并启用本模块。连接恢复后会自动更新，勿重复启动测速。';
@@ -97,7 +111,7 @@
       }
     }
     $('action-hint').textContent = state.job.active || pendingStart ? '已有测速任务，等待完成或使用停止按钮。' :
-      `快速选择目标预算 ${state.network.type === 'cellular' ? state.limits.cellularTargetMiB : state.limits.quickTargetMiB} MiB／资源；当前入口只测所选的${label}。`;
+      `快速选择目标预算 ${state.limits.quickTargetMiB} MiB／资源；当前入口只测所选的${label}。`;
     renderJob(); renderReport(); renderHistory(); setActionState();
     $('pause').textContent = state.paused ? '恢复改写' : '暂停改写';
     $('settings-limits').textContent = `当前设备：粗筛并发 ${state.limits.discoveryConcurrency}，确认并发 ${state.limits.confirmConcurrency}；完整探索目标预算 ${state.limits.discoveryTargetMiB} MiB。`;
@@ -131,21 +145,32 @@
     }
   }
   function renderReport() {
-    const r = current(), run = state.lastRun, live = state.job.active && r && state.job.resourceKey === r.resourceId;
-    const report = run && (run.resources || []).find((x) => r && x.resourceKey === r.resourceId);
+    const r = current(), live = state.job.active && state.job.mediaType === selectedType;
+    const entries = (state.recentRuns || (state.lastRun ? [state.lastRun] : [])).flatMap((run) =>
+      (run.resources || []).filter((item) => item.mediaType === selectedType).map((report) => ({ run, report, key: run.runId + ':' + report.resourceKey })));
+    const chosen = entries.find((x) => x.key === selectedReportKey) || entries[0];
+    const run = chosen && chosen.run, report = chosen && chosen.report;
+    const matching = !!(report && r && report.resourceKey === r.resourceId && run.network === state.network.label);
+    const choice = $('report-choice'); choice.replaceChildren(); choice.disabled = !entries.length;
+    for (const entry of entries) {
+      const option = document.createElement('option'); option.value = entry.key;
+      option.textContent = `${age(entry.run.finishedAt)} · ${typeName(entry.report.mediaType)} ${entry.report.representationId || ''} · ${entry.run.network || ''}`;
+      choice.append(option);
+    }
+    if (chosen) choice.value = chosen.key;
     $('report-metrics').hidden = !report || live; $('traffic-note').hidden = !report || live;
     if (live) {
       $('report-summary').textContent = '候选成绩正在更新'; $('report-detail').textContent = '粗筛和复筛成绩用于入围，只有确认通过的节点才可成为播放选择。';
       badge('report-badge', '进行中'); renderRows(state.job.results || []);
     } else if (!report) {
-      $('report-summary').textContent = `还没有当前${typeName(selectedType)}的结果`;
-      $('report-detail').textContent = run ? '上一轮报告不属于当前选中的资源。换视频、画质或签名后，需要新的确认结果。' : '视频和音频分别选择，音频的好成绩不会代表视频已经优化。';
+      $('report-summary').textContent = `还没有${typeName(selectedType)}测速记录`;
+      $('report-detail').textContent = '完成的记录会保留，切换资源或返回网页不会将其隐藏。视频和音频的选择分别生效。';
       badge('report-badge', '尚未确认'); renderRows([]);
     } else {
       const accepted = !!report.winner && report.committed;
       $('report-summary').textContent = accepted ? (report.winner === report.nativeHost ? '已确认保留原生节点' : '已确认本轮可用节点') : '这一轮尚未产生可用选择';
-      badge('report-badge', accepted ? (report.partial ? '部分探索 · 已确认' : '已确认') : '未完成确认', accepted ? 'good' : 'warning');
-      $('report-detail').textContent = `${age(run.finishedAt)} · ${reasons[report.stopReason] || report.stopReason || '结束'}。` +
+      badge('report-badge', (matching ? '' : '历史记录 · ') + (accepted ? (report.partial ? '部分探索 · 已确认' : '已确认') : '未应用新选择'), accepted && matching ? 'good' : 'neutral');
+      $('report-detail').textContent = `${matching ? '对应当前资源。' : '保留的历史记录，不代表当前资源已优化。'}${age(run.finishedAt)} · ${reasons[report.stopReason] || report.stopReason || '结束'}。` + (report.winner && !report.committed ? `未应用：${report.commitReason || '提交未通过'}。` : '') +
         (report.partial ? '尚未覆盖全部候选，不能称为全局最快。' : accepted ? '这是本轮已测结果，不保证长期最优。' : '已获取的粗筛成绩可用于后续探索，但不会被当作已确认结果。');
       const c = report.coverage || {}, b = report.budget || {};
       $('coverage').textContent = `${c.valid || 0} / ${c.started || 0} / ${c.eligible || 0}`;
@@ -172,17 +197,30 @@
   function finishConfirm(value) { $('confirm-dialog').close(); if (resolveConfirm) { resolveConfirm(value); resolveConfirm = null; } }
   async function command(action, resourceId) {
     const starting = ['quick', 'quick-force', 'full'].includes(action);
-    if (starting) { if (pendingStart || state.job.active) return; pendingStart = true; render(); }
+    if (starting && (pendingStart || state.job.active)) return;
+    const seq = starting ? ++commandSeq : commandSeq;
+    if (starting) { pendingStart = true; pendingSince = Date.now(); selectedReportKey = null; feedback('正在启动测速…'); render(); poll(); }
     try {
       const answer = await api('/api/control', { action, resourceId }, starting ? 90000 : 8000);
-      state = answer.snapshot; connected = true;
-      toast(errors[answer.status] || ({ 'stop-requested': '已停止新增探测，等待在途请求结束。', resumed: '改写已恢复。', cleared: '本网络的选择与历史已清除。', selected: '已完成本轮选择。', 'target-reached': '已确认达到目标。' })[answer.status] || '操作已完成，请查看结果。');
-    } catch (e) { toast(e.message); }
-    finally { if (starting) pendingStart = false; if (state) render(); poll(); }
+      acceptSnapshot(answer.snapshot); connected = true;
+      if (starting && seq !== commandSeq) return;
+      const measured = answer.run && (answer.run.resources || []).find((x) => x.resourceKey === resourceId);
+      if (measured) {
+        selectedReportKey = answer.run.runId + ':' + measured.resourceKey;
+        const latest = state.current.find((x) => x.type === measured.mediaType);
+        const changed = !latest || latest.resourceId !== resourceId || answer.run.network !== state.network.label;
+        feedback(changed ? '所选资源的测速已结束，播放资源或网络已变化。结果已保存在测速记录中；当前资源可再次测速。' :
+          measured.committed ? `已确认${measured.winner === measured.nativeHost ? '保留原生线路' : '选择 ' + hostName(measured.winner)}；后续新请求生效。` :
+          `测速结束，未应用新选择：${errors[measured.commitReason] || reasons[measured.stopReason] || measured.commitReason || answer.status}。结果已保留。`);
+      } else feedback(errors[answer.status] || ({ 'stop-requested': '已停止新增探测，等待在途请求结束。', resumed: '改写已恢复。', cleared: '本网络的选择与历史已清除。' })[answer.status] || `操作结果：${answer.status}`);
+    } catch (e) { if (!starting || seq === commandSeq) feedback(e.message); }
+    finally { if (starting && seq === commandSeq) pendingStart = false; if (state) render(); poll(); }
   }
-  $('tab-video').onclick = () => { selectedType = 'video'; if (state) render(); };
-  $('tab-audio').onclick = () => { selectedType = 'audio'; if (state) render(); };
-  $('quick').onclick = () => { const r = current(); if (r) command(r.confirmed ? 'quick-force' : 'quick', r.resourceId); };
+  $('report-choice').onchange = () => { selectedReportKey = $('report-choice').value; renderReport(); };
+
+  $('tab-video').onclick = () => { selectedType = 'video'; selectedReportKey = null; if (state) render(); };
+  $('tab-audio').onclick = () => { selectedType = 'audio'; selectedReportKey = null; if (state) render(); };
+  $('quick').onclick = () => { const r = current(); if (r) command('quick-force', r.resourceId); };
   $('full').onclick = async () => {
     const r = current(); if (!r) return;
     if (await confirmAction('探索更多候选', `针对所选${typeName(r.type)}探索全量候选，目标预算 ${state.limits.discoveryTargetMiB} MiB，总时限 ${state.limits.runDeadlineSeconds} 秒。会为复筛和确认保留时间；请保持页面在前台。`, '开始探索')) command('full', r.resourceId);
@@ -195,7 +233,7 @@
     const s = state.settings;
     $('setting-enabled').checked = s.enabled; $('setting-region').value = s.region; $('setting-target').value = s.targetMbps;
     $('setting-mode').value = s.mode; $('setting-history').value = s.historyPolicy;
-    $('setting-cellular').checked = s.cellularDiscovery; $('setting-debug').checked = s.debug;
+    $('setting-debug').checked = s.debug;
     $('settings-dialog').showModal();
   };
   $('settings-close').onclick = () => $('settings-dialog').close();
@@ -204,7 +242,7 @@
     try {
       state = await api('/api/settings', { enabled: $('setting-enabled').checked, region: $('setting-region').value,
         targetMbps: Number($('setting-target').value), mode: $('setting-mode').value, historyPolicy: $('setting-history').value,
-        cellularDiscovery: $('setting-cellular').checked, debug: $('setting-debug').checked });
+        debug: $('setting-debug').checked });
       $('settings-dialog').close(); render(); toast('设置已保存在本机。');
     } catch (error) { toast(error.message); setActionState(); }
   };

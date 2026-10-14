@@ -68,7 +68,7 @@ function handleRequest(ctx) {
   if (captured && config.debug && ctx.log) ctx.log('sample_captured ' + info.mediaType + ' ' + info.nativeHost);
   const attempt = state.attempts[net.key + '|' + info.resourceKey];
   const retryDue = !attempt || now - attempt.at >= config.retryAfterFailureSeconds * 1000;
-  if (config.mode === 'adaptive' && !hasDecision && retryDue && captured && (!net.cellular || config.cellularDiscovery)) {
+  if (config.mode === 'adaptive' && !hasDecision && retryDue && captured) {
     maybeTrigger(ctx, store, config, now, info.resourceKey);
   }
 

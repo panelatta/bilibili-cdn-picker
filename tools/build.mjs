@@ -36,7 +36,6 @@ const MODULE_ARGS = [
   'region={{{REGION}}}',
   'targetMbps={{{TARGET_MBPS}}}',
   'historyPolicy={{{HISTORY_POLICY}}}',
-  'cellularDiscovery={{{CELLULAR_DISCOVERY}}}',
   'routeRevision={{{ROUTE_REVISION}}}',
   'probePolicy={{{PROBE_POLICY}}}',
   'debug={{{DEBUG}}}',

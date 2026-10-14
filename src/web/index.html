@@ -25,6 +25,7 @@
  <div class="route-box"><span class="route-label" id="route-label">媒体请求主机</span><strong id="current-host" class="hostname">尚未收到样本</strong><span id="sample-meta" class="muted">仅在这台设备上采样和测速</span></div>
  <div class="metrics"><div><span>确认速率</span><strong id="current-speed">—</strong></div><div><span>目标速率</span><strong id="target-speed">—</strong></div><div><span>选择有效期</span><strong id="decision-ttl">—</strong></div></div>
  <div class="actions"><button class="primary" id="quick" disabled><span>优化当前视频</span><span aria-hidden="true">↗</span></button><button class="secondary" id="full" disabled>探索更多节点</button></div>
+ <p id="action-result" class="description" role="status" hidden></p>
  <p id="action-hint" class="hint">优先测试地区推荐和本机历史，不会每次扫描全部节点。</p>
 </section>
 <section id="job-card" class="card job-card" aria-labelledby="job-title" hidden>
@@ -37,6 +38,7 @@
 </section>
 <section class="card report-card" aria-labelledby="report-title">
  <div class="section-top"><span class="eyebrow" id="report-title">本次结果</span><span id="report-badge" class="badge neutral">尚未测速</span></div>
+ <label class="report-choice" for="report-choice">测速记录 · 最近 20 次<select id="report-choice" aria-label="选择测速记录"></select></label>
  <h2 id="report-summary">还没有当前视频的结果</h2><p id="report-detail" class="description">视频和音频分别选择，音频的好成绩不会代表视频已经优化。</p>
  <div id="report-metrics" class="report-metrics" hidden><div><small>有效 / 已测 / 候选</small><strong id="coverage">—</strong></div><div><small>额外下载</small><strong id="traffic">—</strong></div></div>
  <p id="traffic-note" class="hint" hidden></p>
@@ -57,9 +59,8 @@
  <label class="toggle-row"><span>启用 CDN 优化<small>关闭后媒体请求保持原样</small></span><input id="setting-enabled" type="checkbox" role="switch"></label>
  <div class="form-row"><label for="setting-region">地区推荐</label><select id="setting-region"><option value="SG">新加坡</option><option value="TW">台湾</option><option value="HK">香港</option><option value="JP">日本</option><option value="AU">澳大利亚</option><option value="US">美国</option><option value="NONE">不使用地区推荐</option></select><small>按出口地区的推荐表预筛，不按机房距离过滤。</small></div>
  <div class="form-row"><label for="setting-target">目标速率 · Mbps</label><input type="number" id="setting-target" min="1" max="2000" step="1" required><small>确认达到目标后，快速选择可以提前结束。</small></div>
- <div class="form-row"><label for="setting-mode">测速触发</label><select id="setting-mode"><option value="manual">手动 · 点击开始</option><option value="adaptive">自动 · 新资源触发（实验）</option></select><small>自动模式需要先通过手机端任务生命周期验证。</small></div>
+ <div class="form-row"><label for="setting-mode">测速触发</label><select id="setting-mode"><option value="manual">手动 · 点击开始</option><option value="adaptive">自动 · 新资源触发（实验）</option></select><small>选择自动模式后，新资源会触发测速；Wi-Fi 和蜂窝使用相同策略。</small></div>
  <div class="form-row"><label for="setting-history">历史结果使用方式</label><select id="setting-history"><option value="conservative">谨慎 · 当前资源确认后再切换</option><option value="optimistic">优先尝试历史赢家</option></select></div>
- <label class="toggle-row"><span>允许蜂窝自动与完整探索<small>会额外消耗移动数据</small></span><input type="checkbox" role="switch" id="setting-cellular"></label>
  <label class="toggle-row"><span>记录诊断日志<small>本机脱敏日志，不上传</small></span><input type="checkbox" role="switch" id="setting-debug"></label>
  <p class="hint" id="settings-limits"></p>
  <button class="primary wide" type="submit" id="save-settings">保存设置</button>

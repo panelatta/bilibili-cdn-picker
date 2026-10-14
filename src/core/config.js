@@ -21,15 +21,12 @@ const SCHEMA = {
   preferredHosts: { type: 'hosts', def: [] },
 
   automaticFullDiscovery: { type: 'bool', def: false },
-  cellularDiscovery: { type: 'bool', def: false },
   quickConcurrency: { type: 'int', def: 4, min: 1, max: 20 },
-  cellularConcurrency: { type: 'int', def: 2, min: 1, max: 20 },
   discoveryConcurrency: { type: 'int', def: 8, min: 1, max: 20 },
   refineConcurrency: { type: 'int', def: 4, min: 1, max: 20 },
   confirmConcurrency: { type: 'int', def: 1, min: 1, max: 4 },
 
   quickTargetMiB: { type: 'number', def: 12, min: 2, max: 64 },
-  cellularTargetMiB: { type: 'number', def: 4, min: 2, max: 64 },
   discoveryTargetMiB: { type: 'number', def: 100, min: 10, max: 512 },
 
   coarseKiB: { type: 'int', def: 128, min: 64, max: 256 },
@@ -183,6 +180,8 @@ function resolveConfig(argumentString, overrides) {
     const name = layer[0];
     const values = layer[1];
     Object.keys(values).forEach((key) => {
+      // Retired network-specific gates must not survive a module upgrade.
+      if (['cellularDiscovery', 'cellularConcurrency', 'cellularTargetMiB'].includes(key)) return;
       if (!Object.prototype.hasOwnProperty.call(SCHEMA, key)) {
         if (name === 'store') warnings.push('未知配置项 ' + key);
         return;

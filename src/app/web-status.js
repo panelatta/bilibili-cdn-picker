@@ -7,24 +7,8 @@ const { adapterById } = require('../media/adapters');
 const { applyMobileLimits } = require('../core/mobile-limits');
 const { version } = require('../../package.json');
 
-const SETTINGS = ['enabled', 'mode', 'region', 'targetMbps', 'historyPolicy', 'cellularDiscovery', 'debug'];
-function pick(object, keys) {
-  const out = {};
-  keys.forEach((key) => { if (object && object[key] !== undefined) out[key] = object[key]; });
-  return out;
-}
-function rows(items) {
-  return (Array.isArray(items) ? items : []).slice(0, 30).map((r) =>
-    pick(r, ['host', 'confirmed', 'status', 'stage', 'mbps', 'elapsedMs', 'bytes']));
-}
-function resourceResult(r) {
-  return Object.assign(pick(r, ['resourceKey', 'mediaType', 'representationId', 'nativeHost', 'mode', 'status', 'winner',
-    'score', 'winnerReason', 'enoughFast', 'targetMbps', 'backups', 'stopReason', 'complete', 'partial', 'durationMs', 'committed', 'commitReason']), {
-    coverage: pick(r.coverage, ['eligible', 'started', 'valid']),
-    budget: pick(r.budget, ['limitBytes', 'observedBytes', 'outstandingBytes', 'unobservableBytes', 'unobservableCount', 'overrunCount']),
-    results: rows(r.results),
-  });
-}
+const SETTINGS = ['enabled', 'mode', 'region', 'targetMbps', 'historyPolicy', 'debug'];
+const { pick, rows, loadRuns } = require('../core/run-history');
 
 function webStatus(ctx) {
   const now = ctx.now(), store = ctx.store;
@@ -62,18 +46,16 @@ function webStatus(ctx) {
       'started', 'completed', 'nodesStarted', 'candidates', 'updatedAt', 'deadlineAt']) : {},
     { active: true, results: progress && progress.runId === lease.runId ? rows(progress.results) : [] }) :
     { active: false, expired: !!(lease && lease.runId), results: [] };
-  const rawRun = store.readJson(S.KEYS.lastRun, null);
-  const lastRun = rawRun && (rawRun.networkKey ? rawRun.networkKey === net.key : rawRun.network === net.label) ? Object.assign(pick(rawRun,
-    ['runId', 'mode', 'status', 'stopReason', 'startedAt', 'finishedAt']),
-    { resources: (rawRun.resources || []).slice(0, 4).map(resourceResult) }) : null;
+  const recentRuns = loadRuns(store);
+  const lastRun = recentRuns.find((r) => r.networkKey ? r.networkKey === net.key : r.network === net.label) || null;
   const history = Object.values(profile && profile.ranking || {}).filter((r) => r.confirmedMbps > 0 && now - r.confirmedAt < config.historyTtlSeconds * 1000)
     .sort((a, b) => b.confirmedMbps - a.confirmedMbps).slice(0, 20)
     .map((r) => pick(r, ['host', 'confirmedMbps', 'confirmedAt', 'confirmMode', 'attempts', 'successes']));
   return { version, now, preview: !!ctx.preview, network: { label: net.label, type: net.type },
     environment: pick(ctx.environment, ['system', 'surge-version']),
-    settings: pick(config, SETTINGS), paused: control.paused, current, job, lastRun, history,
+    settings: pick(config, SETTINGS), paused: control.paused, current, job, lastRun, recentRuns, history,
     limits: pick(effective, ['quickConcurrency', 'discoveryConcurrency', 'refineConcurrency', 'confirmConcurrency',
-      'quickTargetMiB', 'cellularTargetMiB', 'discoveryTargetMiB', 'coarseKiB', 'refineKiB', 'quickConfirmKiB', 'fullConfirmKiB', 'runDeadlineSeconds']),
+      'quickTargetMiB', 'discoveryTargetMiB', 'coarseKiB', 'refineKiB', 'quickConfirmKiB', 'fullConfirmKiB', 'runDeadlineSeconds']),
     storageWarnings: store.problems.slice(0, 4).map((p) => p.problem) };
 }
 module.exports = { webStatus, SETTINGS };

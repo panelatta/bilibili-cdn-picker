@@ -4,7 +4,7 @@
 // policy, sample sizes, candidate counts, traffic budget or run deadline.
 // This does not cap a single response or prove that native memory is bounded.
 const CAPS = {
-  quickConcurrency: 2, cellularConcurrency: 1, discoveryConcurrency: 2,
+  quickConcurrency: 2, discoveryConcurrency: 2,
   refineConcurrency: 1, confirmConcurrency: 1,
 };
 

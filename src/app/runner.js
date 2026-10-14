@@ -15,6 +15,7 @@ const S = require('../core/state');
 const { loadConfig, ensureMeta, currentNetwork } = require('./context');
 const { applyMobileLimits } = require('../core/mobile-limits');
 const { resultRows } = require('../core/result-view');
+const { saveRun, loadRuns } = require('../core/run-history');
 const { ACTIONS, normalizeAction } = require('../core/actions');
 
 // Discovery Runner (design §4.2). Runs as its own script session (panel tap,
@@ -56,7 +57,7 @@ async function runAction(ctx) {
       return clearNetwork(ctx, store, config, now);
     case 'clear-all':
       clearRequestContexts(store);
-      ['samples', 'decisions', 'failures', 'state', 'lease', 'trigger', 'lastRun', 'control', 'progress'].forEach((k) => store.remove(S.KEYS[k]));
+      ['samples', 'decisions', 'failures', 'state', 'lease', 'trigger', 'lastRun', 'runHistory', 'control', 'progress'].forEach((k) => store.remove(S.KEYS[k]));
       return { action, status: 'cleared' };
     default:
       return runDiscovery(ctx, action, config, loaded.warnings);
@@ -78,6 +79,9 @@ function clearNetwork(ctx, store, config, now) {
   });
   delete decisions.networks[net.key];
   store.writeJson(S.KEYS.decisions, decisions);
+  store.writeJson(S.KEYS.runHistory, loadRuns(store).filter((r) => r.networkKey ? r.networkKey !== net.key : r.network !== net.label));
+  const last = store.readJson(S.KEYS.lastRun, null);
+  if (last && (last.networkKey ? last.networkKey === net.key : last.network === net.label)) store.remove(S.KEYS.lastRun);
   return { action: 'clear-network', status: 'cleared', network: net.label };
 }
 
@@ -116,7 +120,6 @@ async function runDiscovery(ctx, requested, config, warnings) {
   summary.network = net.label;
   summary.networkKey = net.key;
   summary.networkType = net.type;
-  if (net.cellular && !config.cellularDiscovery && (automatic || action === 'full')) return early('cellular-blocked');
 
   const activeLease = store.readJson(S.KEYS.lease, null);
   if (S.isObject(activeLease) && activeLease.runId && activeLease.expiresAt > startedAt) {
@@ -144,11 +147,11 @@ async function runDiscovery(ctx, requested, config, warnings) {
 
   // Automatic full exploration backs off after any attempt, including partial
   // ones that never set lastFullScanAt.
-  const fullDue = automatic && config.automaticFullDiscovery && net.type === 'wifi' &&
+  const fullDue = automatic && config.automaticFullDiscovery &&
     (!profile.lastFullScanAt || startedAt - profile.lastFullScanAt > config.fullScanTtlSeconds * 1000) &&
     (!profile.lastFullAttemptAt || startedAt - profile.lastFullAttemptAt > config.fullRetrySeconds * 1000);
   const mode = action === 'full' || fullDue ? 'full' : 'quick';
-  const picked = pickTargets({ samples, decisions, failures, state, net, now: startedAt, config, action, mode, registry, resourceKey: ctx.resourceKey });
+  const picked = pickTargets({ samples, decisions, failures, state, net, now: startedAt, config, action, mode, registry, resourceKey: ctx.resourceKey, manualReselect: ctx.manualReselect });
   if (!picked.targets.length) return early(picked.reason, { network: net.label });
 
   const runId = randomId(10, rng) + '-' + startedAt;
@@ -192,7 +195,7 @@ async function runDiscovery(ctx, requested, config, warnings) {
   summary.eventCounts = logger.counts;
   summary.storeProblems = store.problems.slice(0, 5);
   logger.event('run_finished', { status: summary.status, reason: summary.stopReason });
-  store.writeJson(S.KEYS.lastRun, summary);
+  saveRun(store, summary);
   return summary;
 }
 
@@ -206,7 +209,7 @@ function pickTargets(p) {
   if (!fresh.length) return { targets: [], reason: 'no-fresh-sample' };
   const usable = fresh.filter((s) => {
     const rf = failures.resources[s.key];
-    return !(rf && rf.nativeFailedAt);
+    return p.manualReselect || !(rf && rf.nativeFailedAt);
   });
   if (!usable.length) return { targets: [], reason: 'sample-invalid' };
   usable.sort((a, b) => (MEDIA_ORDER[a.mediaType] || 0) - (MEDIA_ORDER[b.mediaType] || 0) || b.capturedAt - a.capturedAt);
@@ -368,7 +371,7 @@ async function runForResource(run, target, mode) {
   const region = reorderRegion(regionHosts(registry, config.region), profile, now, ttlMs);
   const order = registry.diversityOrder;
   const cursor = typeof profile.exploreCursor === 'number' ? profile.exploreCursor : Math.floor(run.rng() * Math.max(1, order.length));
-  const budgetMiB = mode === 'full' ? config.discoveryTargetMiB : net.cellular ? config.cellularTargetMiB : config.quickTargetMiB;
+  const budgetMiB = mode === 'full' ? config.discoveryTargetMiB : config.quickTargetMiB;
   const target$ = targetMbps(config, null);
 
   const sample = { url: target.url, headers: target.headers, nativeHost: target.nativeHost };
@@ -387,7 +390,6 @@ async function runForResource(run, target, mode) {
     },
     runId: run.runId,
     targetMbps: target$,
-    cellular: net.cellular,
     budgetBytes: budgetMiB * MiB,
     pool: run.pool,
     onProvisional: (winner, backups) => {
@@ -573,7 +575,9 @@ function commitDecision(run, target, result, mode, provisional) {
   const failures = S.loadFailures(store, net.key);
   const current = decisions.items[target.key];
   let verdict;
-  if (current && current.runId === run.runId) {
+  if (ctx.manualReselect) {
+    verdict = { replace: true, reason: 'manual-retest' };
+  } else if (current && current.runId === run.runId) {
     verdict = { replace: true, reason: 'same-run' };
   } else {
     let view = null;
@@ -591,6 +595,17 @@ function commitDecision(run, target, result, mode, provisional) {
     verdict = decideReplacement(view, { host: winner.host, score: winner.score }, now, config);
   }
   if (verdict.replace) {
+    if (ctx.manualReselect) {
+      const rf = failures.resources[target.key];
+      if (rf) {
+        // A successful explicit recheck supersedes this host's old failure,
+        // but does not clear failures for untested alternatives.
+        if (rf.hosts) delete rf.hosts[winner.host];
+        if (winner.host === target.nativeHost) { delete rf.nativeFailedAt; delete rf.nativeStatus; }
+        rf.count = 0;
+        S.saveFailures(store, net.key, failures, now);
+      }
+    }
     decisions.items[target.key] = {
       key: target.key,
       mediaType: target.mediaType,

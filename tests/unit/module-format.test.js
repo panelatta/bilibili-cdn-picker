@@ -18,7 +18,7 @@ const remote = () => fs.readFileSync(path.join(root, 'surge/BilibiliCDNPicker.re
 test('both installable modules have valid arguments, script declarations and panel references', () => {
   for (const [text, isRemote] of [[local(), false], [remote(), true]]) {
     const m = validateModule(text, { remote: isRemote });
-    assert.equal(Object.keys(m.defaults).length, 9);
+    assert.equal(Object.keys(m.defaults).length, 8);
     assert.equal(m.defaults.PROBE_POLICY, '');
     assert.equal(Object.keys(m.scripts).length, 9);
     assert.equal(Object.keys(m.panels).length, 1);

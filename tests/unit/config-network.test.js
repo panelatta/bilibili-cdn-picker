@@ -12,13 +12,13 @@ test('defaults follow the design configuration contract', () => {
   assert.equal(config.mode, 'manual');
   assert.equal(config.shortlistLimit, 20);
   assert.equal(config.automaticFullDiscovery, false);
-  assert.equal(config.cellularDiscovery, false);
+  assert.equal(config.cellularDiscovery, undefined);
   assert.equal(config.quickConcurrency, 4);
-  assert.equal(config.cellularConcurrency, 2);
+  assert.equal(config.cellularConcurrency, undefined);
   assert.equal(config.discoveryConcurrency, 8);
   assert.equal(config.confirmConcurrency, 1);
   assert.equal(config.quickTargetMiB, 12);
-  assert.equal(config.cellularTargetMiB, 4);
+  assert.equal(config.cellularTargetMiB, undefined);
   assert.equal(config.discoveryTargetMiB, 100);
   assert.equal(config.resourceTtlSeconds, 600);
   assert.equal(config.fullScanTtlSeconds, 86400);

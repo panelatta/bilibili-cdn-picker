@@ -185,14 +185,14 @@ test('objects shorter than the coarse range use one consistent shorter range', a
   assert.equal(r2.status, 'object-too-small');
 });
 
-test('cellular quick mode: 4 MiB budget, concurrency 2, confirmation reserved', async () => {
+test('explicit small budget reserves confirmation without network-specific concurrency', async () => {
   const clock = new FakeClock();
   const cdn = createCdn(clock, { [WUHAN]: { mbps: 60 } }, { mbps: 20, latencyMs: 60 });
-  const s = session(clock, cdn, { cellular: true, budgetMiB: 4 });
+  const s = session(clock, cdn, { budgetMiB: 4 });
   const result = await clock.drive(s.runQuick(sgShortlist(), () => []));
   const b = result.budget;
   assert.ok(b.observedBytes + b.unobservableBytes <= 4 * MiB);
-  assert.ok(cdn.peak() <= 2);
+  assert.ok(cdn.peak() <= 4);
   assert.ok(result.stages.some((x) => x.stage === 'confirm'), 'budget for confirmation was kept back');
   assert.ok(result.winner);
 });

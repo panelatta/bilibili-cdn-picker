@@ -22,7 +22,6 @@ const STATUS_TEXT = {
   disabled: '模块已关闭',
   paused: '改写已暂停',
   'manual-mode': '手动模式，未运行',
-  'cellular-blocked': '蜂窝网络下未启用该探索',
   'no-sample': '没有媒体样本：先在 B 站 App 播放视频约 10 秒',
   'no-fresh-sample': '样本已过期：继续播放视频后再点按',
   'sample-invalid': '样本对原生节点也失效，等待新播放请求',

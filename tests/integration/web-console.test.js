@@ -36,7 +36,7 @@ test('local web assets bootstrap a stable token and status never probes or leaks
   assert.ok((await c.call('/')).raw.includes(c.token), 'refresh does not invalidate another tab');
   for (const path of ['/app.js', '/app.css', '/icon.svg', '/manifest.webmanifest']) assert.equal((await c.call(path)).code, 200);
   const status = await c.call('/api/status');
-  assert.equal(status.data.version, '0.4.0');
+  assert.equal(status.data.version, '0.4.1');
   assert.equal(status.data.current[0].confirmed, false);
   assert.equal(d.httpCalls.length, 0);
   assert.equal(d.apiCalls.length, 0);
@@ -118,4 +118,53 @@ test('status rejects old-network reports and ignores expired decisions', async (
   d.network = { wifi: { ssid: 'Different-network' }, v4: { primaryInterface: 'en0' } };
   const other = (await c.call('/api/status')).data;
   assert.equal(other.lastRun, null); assert.equal(other.history.length, 0); assert.equal(other.current.length, 0);
+});
+
+test('reports survive resource changes, subsequent runs, reloads and network changes without leaking signed URLs', async () => {
+  const d = createDevice(), c = await client(d); await capture(d, 30080);
+  const firstId = (await c.call('/api/status')).data.current[0].resourceId;
+  const first = await c.call('/api/control', { action: 'quick', resourceId: firstId });
+  await capture(d, 30102);
+  let s = (await c.call('/api/status')).data;
+  assert.equal(s.current.find((r) => r.type === 'video').confirmed, false);
+  assert.equal(s.recentRuns[0].resources[0].resourceKey, firstId);
+  const nextId = s.current.find((r) => r.type === 'video').resourceId;
+  await c.call('/api/control', { action: 'quick', resourceId: nextId });
+  const reopened = await client(d);
+  s = (await reopened.call('/api/status')).data;
+  assert.equal(s.recentRuns.length, 2);
+  assert.equal(s.recentRuns[1].runId, first.data.run.runId);
+  assert.doesNotMatch(JSON.stringify(s.recentRuns), /upsig|upgcxcode|Authorization/);
+  d.network = { v4: { primaryInterface: 'pdp_ip0' }, 'cellular-data': { carrier: 'Test' } };
+  s = (await reopened.call('/api/status')).data;
+  assert.equal(s.lastRun, null); assert.equal(s.recentRuns.length, 2);
+});
+
+test('manual web optimization really probes again and bypasses automatic dwell hysteresis', async () => {
+  const d = createDevice({ cdn: { [NATIVE]: { delayMs: 2 } } }), c = await client(d); await capture(d, 30080);
+  const id = (await c.call('/api/status')).data.current[0].resourceId;
+  const first = await c.call('/api/control', { action: 'quick', resourceId: id });
+  assert.equal(first.data.run.resources[0].winner, NATIVE);
+  const count = d.httpCalls.length;
+  const faster = 'cn-hbwh-fx-01-12.bilivideo.com';
+  d.cdn[NATIVE] = { delayMs: 100 };
+  d.cdn[faster] = { delayMs: 2 };
+  const again = await c.call('/api/control', { action: 'quick', resourceId: id });
+  assert.ok(d.httpCalls.length > count);
+  assert.equal(again.data.run.resources[0].committed, true);
+  assert.equal(again.data.run.resources[0].winner, faster);
+  assert.equal(again.data.snapshot.current[0].selectedHost, faster);
+});
+
+test('cellular web full exploration ignores retired persisted restrictions and uses equal budgets', async () => {
+  const d = createDevice({ network: { v4: { primaryInterface: 'pdp_ip0' }, 'cellular-data': { carrier: 'Test' } } });
+  d.store.set('BiliCDNPicker.config', JSON.stringify({ cellularDiscovery: false, cellularTargetMiB: 4, cellularConcurrency: 1 }));
+  const c = await client(d); await capture(d, 30080);
+  const s = (await c.call('/api/status')).data;
+  assert.equal(s.limits.quickTargetMiB, 12);
+  assert.equal('cellularDiscovery' in s.settings, false);
+  const result = await c.call('/api/control', { action: 'full', resourceId: s.current[0].resourceId });
+  assert.equal(result.code, 200);
+  assert.ok(result.data.run.resources.length > 0);
+  assert.equal(result.data.run.resources[0].budget.limitBytes, 100 * 1024 * 1024);
 });

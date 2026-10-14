@@ -2,9 +2,13 @@
 
 面向 iOS Surge 的 B 站点播 CDN 测速与选择模块。它用当前正在播放的视频或音频资源，对候选 CDN 做分阶段 Range 测速，确认足够快的节点后，只把同一资源后续的媒体请求改写到该节点。
 
-当前版本 **v0.4.0** 增加 Surge 本机网页控制台：[打开 CDN Picker](https://bcp.test/)。先更新并启用模块，再在手机 Safari 打开；可添加到主屏幕。不需要 JSBox、远程后端或开放 Surge 管理端口。
+当前版本 **v0.4.1** 修复测速记录消失和重测反馈，移除按网络类型设置的测速限制。[打开 CDN Picker](https://bcp.test/)。先更新并启用模块，再在手机 Safari 打开；可添加到主屏幕。不需要 JSBox、远程后端或开放 Surge 管理端口。
 
-136 项自动化测试覆盖核心逻辑与模拟 Surge 构建产物；网页已完成本地浏览器交互检查。手机反馈确认 v0.3.3 本轮测试无内存告警，但这不等于所有网络条件都不会超限。v0.4.0 的 Safari 本地域名拦截、主屏幕启动和任务生命周期仍需按 [实机清单](docs/runtime-experiments.md) 验收。
+Wi-Fi 和蜂窝均可快速、完整和自动测速，默认快速预算统一 12 MiB、完整探索 100 MiB。旧蜂窝禁令、4 MiB 和额外降并发配置不再生效，无需清除本机数据。iOS 内存保护、任务互斥、签名校验和网络提交校验保留。
+
+网页手动优化每次均实际重测，确认后不受自动驻留时间和旧分数迟滞阻挡。报告区保留最近 20 次记录，可跨资源、跨网络回看；历史不冒充当前选择。切后台后服务端任务已结束时，浏览器旧请求不会继续锁住按钮，操作结果持续显示具体原因。
+
+142 项自动化测试覆盖核心逻辑与模拟 Surge 构建产物；网页已完成本地浏览器交互检查。手机反馈确认 v0.3.3 本轮测试无内存告警，但这不等于所有网络条件都不会超限。v0.4.1 的 Safari 本地域名拦截、主屏幕启动和任务生命周期仍需按 [实机清单](docs/runtime-experiments.md) 验收。
 
 ## 手机看不到面板或命中记录时
 
@@ -12,9 +16,9 @@
 
 v0.3.2 将 `DEBUG` 同时连接到 Surge 原生脚本 `debug` 参数；命中的媒体请求会输出不含签名的 `router_matched` 标记。另补充 HTTP 80 媒体请求和限定主机的 HTTP 引擎声明，HTTPS 请求不会降级为 HTTP。
 
-`Home → Modify → Scripting` 是主配置的编辑入口，不能把它当作合并模块后的运行时脚本清单，也不能因为列表为空就判定模块脚本未加载。模块设置叠加在主配置之上，不通过主配置 UI 编辑，参见 [Surge 模块说明](https://manual.nssurge.com/profile/module.html)。v0.4.0 优先使用 Safari 网页执行快速选择；通过快捷指令选择 `BiliCDN-Diagnostics` 可查看状态。编辑器运行只是已载入正确代码与参数后的备用方式，不要求模块脚本出现在 Modify 列表中。
+`Home → Modify → Scripting` 是主配置的编辑入口，不能把它当作合并模块后的运行时脚本清单，也不能因为列表为空就判定模块脚本未加载。模块设置叠加在主配置之上，不通过主配置 UI 编辑，参见 [Surge 模块说明](https://manual.nssurge.com/profile/module.html)。v0.4.1 优先使用 Safari 网页执行快速选择；通过快捷指令选择 `BiliCDN-Diagnostics` 可查看状态。编辑器运行只是已载入正确代码与参数后的备用方式，不要求模块脚本出现在 Modify 列表中。
 
-若模块已启用但找不到脚本和面板，先停用旧版，再安装[无参数诊断模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.diagnostic.sgmodule)。该模块固定手动模式、SG 和调试开关，去掉参数替换，并提供无需脚本运行的静态 `BCP v0.4.0 已加载` 标记。不要同时启用普通版和诊断版。静态标记仍不出现时继续核对模块启用状态和面板授权；静态与动态面板卡片出现只证明面板声明生效；v0.4.0 网页显示版本、网络和样本状态才是新的操作验收入口。
+若模块已启用但找不到脚本和面板，先停用旧版，再安装[无参数诊断模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.diagnostic.sgmodule)。该模块固定手动模式、SG 和调试开关，去掉参数替换，并提供无需脚本运行的静态 `BCP v0.4.1 已加载` 标记。不要同时启用普通版和诊断版。静态标记仍不出现时继续核对模块启用状态和面板授权；静态与动态面板卡片出现只证明面板声明生效；v0.4.1 网页显示版本、网络和样本状态才是新的操作验收入口。
 
 ## 工作方式
 
@@ -33,7 +37,7 @@ v0.3.2 将 `DEBUG` 同时连接到 Surge 原生脚本 `debug` 参数；命中的
 
 ## 安装
 
-手机直接安装：[远程模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.remote.sgmodule) · [一键导入 Surge](surge:///install-module?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpanelatta%2Fbilibili-cdn-picker%2Fmain%2Fsurge%2FBilibiliCDNPicker.remote.sgmodule)。在 Surge 的模块管理中选择通过 URL 安装，粘贴远程模块地址并启用即可，无需复制本地 JS 文件。远程版脚本固定到已验证提交 `2524abcf6d6e706b3170d45b851bcdb9e55835a0`（v0.4.0）。
+手机直接安装：[远程模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.remote.sgmodule) · [一键导入 Surge](surge:///install-module?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpanelatta%2Fbilibili-cdn-picker%2Fmain%2Fsurge%2FBilibiliCDNPicker.remote.sgmodule)。在 Surge 的模块管理中选择通过 URL 安装，粘贴远程模块地址并启用即可，无需复制本地 JS 文件。远程版脚本固定到已验证提交 `2524abcf6d6e706b3170d45b851bcdb9e55835a0`（v0.4.1）。
 
 若旧链接导入时报 `Malformed argument declaration … PROBE_POLICY:`，重新获取修正后的远程模块；无默认值的声明已改为 `PROBE_POLICY`，参数仍可留空。
 
@@ -48,7 +52,7 @@ v0.3.2 将 `DEBUG` 同时连接到 Surge 原生脚本 `debug` 参数；命中的
 
 ## 使用
 
-1. 在 Surge 更新原有模块，确认版本为 v0.4.0，只启用原版或诊断版其中之一。MITM 与脚本功能保持开启。
+1. 在 Surge 更新原有模块，确认版本为 v0.4.1，只启用原版或诊断版其中之一。MITM 与脚本功能保持开启。
 2. Safari 打开 [https://bcp.test](https://bcp.test/)。此地址由本机模块返回页面；关闭 Surge 或停用模块时不能使用。
 3. 在 B 站固定画质播放约 10 秒，再于两分钟内回到网页。选择“视频”，点击“优化当前视频”，保持网页在前台等待结果。音频需要单独选择；网页一次只测所选资源。
 4. 查看当前选择、确认速率、停止原因、有效／已测／候选数量与额外流量。原生线路已足够快时保留原生；粗筛快但确认失败不算优化成功。
@@ -79,11 +83,10 @@ v0.3.2 将 `DEBUG` 同时连接到 Surge 原生脚本 `debug` 参数；命中的
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `ENABLED` | `true` | 总开关；关闭后所有请求原样放行 |
-| `MODE` | `manual` | `adaptive` 会在发现新资源时自动触发测速，需先完成生命周期实验 |
+| `MODE` | `manual` | `adaptive` 会在发现新资源时自动触发测速，适用于 Wi-Fi 和蜂窝 |
 | `REGION` | `SG` | 地区推荐表：`SG`、`TW`、`HK`、`JP`、`AU`、`US` 或 `NONE` |
 | `TARGET_MBPS` | `80` | 未知码率时的“足够快”目标 |
 | `HISTORY_POLICY` | `conservative` | `optimistic` 会把本网络历史最佳节点直接用于尚未测速的资源，失败后退回原生 |
-| `CELLULAR_DISCOVERY` | `false` | 允许蜂窝网络下的自动任务和完整探索；手动快速选择始终可用，蜂窝预算 4 MiB |
 | `ROUTE_REVISION` | `default` | 更换代理出口后修改，使测速历史按出口隔离 |
 | `PROBE_POLICY` | 空 | 测速请求使用的 Surge 策略名；留空则按规则匹配，应与播放实际走的策略一致 |
 | `DEBUG` | `false` | 输出脱敏日志，并启用 Surge 请求备注中的原生脚本调试 |
@@ -108,7 +111,7 @@ v0.3.2 将 `DEBUG` 同时连接到 Surge 原生脚本 `debug` 参数；命中的
 - 模块不修复解码、渲染或浏览器问题。
 - 数据只保存在本机：网络标识以加盐摘要保存，日志不记录签名 URL、Cookie、SSID 或 BSSID，不上传遥测。
 
-## 升级到 v0.4.0
+## 升级到 v0.4.1
 
 两种远程模块使用同一套修复后的脚本，只有默认参数与诊断显示不同：
 

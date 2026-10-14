@@ -46,7 +46,6 @@ class DiscoverySession {
     this.log = p.log || (() => {});
     this.runId = p.runId || 'run';
     this.targetMbps = p.targetMbps;
-    this.cellular = !!p.cellular;
     this.onProvisional = p.onProvisional || null;
     this.budget = new Budget(p.budgetBytes);
     this.pool = p.pool || new RequestPool(20);
@@ -294,7 +293,7 @@ class DiscoverySession {
       name: 'refine',
       deadlineAt,
       hosts,
-      concurrency: Math.min(cfg.refineConcurrency, this.cellular ? cfg.cellularConcurrency : 20),
+      concurrency: cfg.refineConcurrency,
       rangeStart: 0,
       rangeBytes: cfg.refineKiB * KiB,
       cutoff,
@@ -411,7 +410,7 @@ class DiscoverySession {
     let round = 0;
     let stopReason = null;
     let provisionalHost = null;
-    const concurrency = this.cellular ? cfg.cellularConcurrency : cfg.quickConcurrency;
+    const concurrency = cfg.quickConcurrency;
 
     for (;;) {
       const plan = this.planQuick(batch.length);
@@ -509,13 +508,13 @@ class DiscoverySession {
     if (pre.fatal) return this.finish(pre.fatal, null, [], pre.fatal, orderedHosts.length);
 
     const hosts = orderedHosts.filter((h) => h !== this.nativeHost);
-    const concurrency = this.cellular ? cfg.cellularConcurrency : cfg.discoveryConcurrency;
+    const concurrency = cfg.discoveryConcurrency;
     // Keep the same sample sizes and Top K, but reserve wall-clock time for
     // the decision-producing stages instead of spending the whole run on coarse.
     const remainingMs = Math.max(0, this.deadlineAt - this.now());
     const confirmReserveMs = Math.min(remainingMs / 3, refineTop * cfg.confirmTimeoutMs / cfg.confirmConcurrency);
     const laterReserveMs = Math.min(remainingMs / 2,
-      coarseTop * cfg.refineTimeoutMs / Math.min(cfg.refineConcurrency, this.cellular ? cfg.cellularConcurrency : 20) + confirmReserveMs);
+      coarseTop * cfg.refineTimeoutMs / cfg.refineConcurrency + confirmReserveMs);
     const coarseDeadlineAt = this.deadlineAt - laterReserveMs;
     const refineDeadlineAt = this.deadlineAt - confirmReserveMs;
     const coarse = await this.coarse(hosts, concurrency, coarseTop, keepCoarse, coarseDeadlineAt);

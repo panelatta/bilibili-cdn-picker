@@ -65,7 +65,7 @@ test('default iOS policy retains shortlists, expansion, Top 20/5, 1/4 MiB sample
   assert.equal(config.fullCoarseTop, 20);
   assert.equal(config.fullRefineTop, 5);
   assert.equal(config.quickTargetMiB, 12);
-  assert.equal(config.cellularTargetMiB, 4);
+  assert.equal(config.cellularTargetMiB, undefined);
   assert.equal(config.discoveryTargetMiB, 100);
   assert.equal(config.runDeadlineSeconds, 60);
   assert.equal(config.maxResourcesPerRun, 2);

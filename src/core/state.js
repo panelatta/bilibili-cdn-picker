@@ -21,6 +21,7 @@ const KEYS = {
   control: PREFIX + 'control',
   trigger: PREFIX + 'trigger',
   lastRun: PREFIX + 'lastRun',
+  runHistory: PREFIX + 'runHistory',
   progress: PREFIX + 'progress',
 };
 const SCHEMA_VERSION = 1;

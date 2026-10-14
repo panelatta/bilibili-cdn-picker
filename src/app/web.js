@@ -5,6 +5,7 @@ const { getHeader } = require('../media/headers');
 const S = require('../core/state');
 const { SCHEMA, coerce } = require('../core/config');
 const { webStatus, SETTINGS } = require('./web-status');
+const { publicRun } = require('../core/run-history');
 
 const TOKEN_KEY = 'BiliCDNPicker.webToken';
 const BASE_HEADERS = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
@@ -79,7 +80,7 @@ async function handleWebRequest(ctx) {
   const { runAction } = require('./runner');
   // This HTTP script owns the task until completion. The browser keeps the
   // POST open while separate GETs poll progress; no post-$done background work.
-  const result = await runAction(Object.assign({}, ctx, { trigger: 'button', action: body.action, resourceKey: body.resourceId }));
-  return response(result.status === 'busy' ? 409 : 200, { status: result.status, snapshot: webStatus(ctx) });
+  const result = await runAction(Object.assign({}, ctx, { trigger: 'button', action: body.action === 'quick' ? 'quick-force' : body.action, resourceKey: body.resourceId, manualReselect: true }));
+  return response(result.status === 'busy' ? 409 : 200, { status: result.status, run: result.runId ? publicRun(result) : null, snapshot: webStatus(ctx) });
 }
 module.exports = { handleWebRequest, TOKEN_KEY, response };

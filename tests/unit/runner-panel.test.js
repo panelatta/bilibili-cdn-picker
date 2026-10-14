@@ -155,15 +155,15 @@ test('full exploration: complete run sets the full-scan time, partial does not',
   assert.ok(p2.lastFullCoverage.started < p2.lastFullCoverage.eligible);
 });
 
-test('cellular: no automatic or full discovery by default, quick uses 4 MiB', async () => {
-  const w = world({ network: CELL, argument: 'mode=adaptive' });
+test('cellular permits automatic and full discovery and uses the same quick budget as Wi-Fi', async () => {
+  const w = world({ network: CELL, argument: 'mode=adaptive&cellularDiscovery=false&cellularTargetMiB=4&cellularConcurrency=1' });
   w.play();
-  assert.equal((await w.run('auto', { trigger: null })).status, 'cellular-blocked');
-  assert.equal((await w.run('full')).status, 'cellular-blocked');
-  const quick = await w.run('quick');
-  const b = quick.resources[0].budget;
-  assert.ok(b.observedBytes + b.unobservableBytes <= 4 * 1024 * 1024);
-  assert.ok(w.cdn.peak() <= 2);
+  assert.ok(w.apiCalls.length > 0, 'adaptive request triggers on cellular');
+  assert.equal((await w.run('auto', { trigger: null })).status, 'target-reached');
+  const full = await w.run('full');
+  assert.ok(full.resources.length > 0);
+  const quick = await w.run('quick-force');
+  assert.equal(quick.resources[0].budget.limitBytes, 12 * 1024 * 1024);
 });
 
 test('manual mode ignores timer and HTTP-API triggers', async () => {
