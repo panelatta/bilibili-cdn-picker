@@ -30,7 +30,7 @@ v0.3.2 将 `DEBUG` 同时连接到 Surge 原生脚本 `debug` 参数；命中的
 
 ## 安装
 
-手机直接安装：[远程模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.remote.sgmodule) · [一键导入 Surge](surge:///install-module?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpanelatta%2Fbilibili-cdn-picker%2Fmain%2Fsurge%2FBilibiliCDNPicker.remote.sgmodule)。在 Surge 的模块管理中选择通过 URL 安装，粘贴远程模块地址并启用即可，无需复制本地 JS 文件。远程版脚本固定到已验证提交 `f72f833753e30e22978323d6deb12f0e608bdb74`（v0.3.2）。
+手机直接安装：[远程模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.remote.sgmodule) · [一键导入 Surge](surge:///install-module?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpanelatta%2Fbilibili-cdn-picker%2Fmain%2Fsurge%2FBilibiliCDNPicker.remote.sgmodule)。在 Surge 的模块管理中选择通过 URL 安装，粘贴远程模块地址并启用即可，无需复制本地 JS 文件。远程版脚本固定到已验证提交 `2810b3c9d0d00924477eea9199d5bad115acb3a7`（v0.3.3）。
 
 若旧链接导入时报 `Malformed argument declaration … PROBE_POLICY:`，重新获取修正后的远程模块；无默认值的声明已改为 `PROBE_POLICY`，参数仍可留空。
 
