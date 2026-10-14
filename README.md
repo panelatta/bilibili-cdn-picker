@@ -10,9 +10,9 @@
 
 v0.3.2 将 `DEBUG` 同时连接到 Surge 原生脚本 `debug` 参数；命中的媒体请求会输出不含签名的 `router_matched` 标记。另补充 HTTP 80 媒体请求和限定主机的 HTTP 引擎声明，HTTPS 请求不会降级为 HTTP。
 
-面板依赖 Surge 的显示位置、功能授权和生效配置，不作为唯一入口。可以从脚本编辑器手动运行 `BiliCDN-Diagnostics` 查看版本、网络和样本；运行 `BiliCDN-Panel` 做快速选择，`BiliCDN-Explore` 做完整探索。手动运行结果会写入日志并发送本机通知；自动刷新不测速、不通知。
+`Home → Modify → Scripting` 是主配置的编辑入口，不能把它当作合并模块后的运行时脚本清单，也不能因为列表为空就判定模块脚本未加载。模块设置叠加在主配置之上，不通过主配置 UI 编辑，参见 [Surge 模块说明](https://manual.nssurge.com/profile/module.html)。优先点击“B站 CDN”面板刷新按钮执行快速选择；通过快捷指令选择 `BiliCDN-Diagnostics` 可查看状态。编辑器运行只是已载入正确代码与参数后的备用方式，不要求模块脚本出现在 Modify 列表中。
 
-若模块已启用但找不到脚本和面板，先停用旧版，再安装[无参数诊断模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.diagnostic.sgmodule)。该模块固定手动模式、SG 和调试开关，去掉参数替换，并提供无需脚本运行的静态 `BCP v0.3.2 已加载` 标记。不要同时启用普通版和诊断版。静态标记仍不出现时继续核对当前配置、模块加载及面板授权，不能仅凭界面列表为空确定根因。
+若模块已启用但找不到脚本和面板，先停用旧版，再安装[无参数诊断模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.diagnostic.sgmodule)。该模块固定手动模式、SG 和调试开关，去掉参数替换，并提供无需脚本运行的静态 `BCP v0.3.2 已加载` 标记。不要同时启用普通版和诊断版。静态标记仍不出现时继续核对模块启用状态和面板授权；静态与动态面板卡片出现只证明面板声明生效，刷新后显示版本、网络和样本状态才证明控制脚本执行。
 
 ## 工作方式
 

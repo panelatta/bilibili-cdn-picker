@@ -743,3 +743,14 @@ v0.3.2 针对实机反馈补充以下能力。用户后续截图确认媒体请�
 5. 模拟测试覆盖截图同类 HTTPS URL、HTTP `:80`、不支持的协议端口组合、无面板手动入口、只读诊断、原生 debug 绑定和静态诊断模块。iOS 模块的实际应用与面板显示仍需手机确认。
 
 依据：[Surge 脚本 debug](https://manual.nssurge.com/scripting/overview.html)、[面板功能](https://manual.nssurge.com/tools/panel.html)、[HTTP 引擎](https://manual.nssurge.com/http/overview.html)、[Biliverse 的海外请求兼容案例](https://github.com/Biliverse/Redirect/issues/10)。
+
+
+### 18.7 区分主配置编辑列表与模块脚本运行
+
+实机反馈确认：诊断模块的三个面板已经显示，但 `Home → Modify → Scripting` 仍为空。不能据此判断模块脚本未加载，也不能把“必须能在此列表找到 BiliCDN-Router”作为验收条件。Surge 官方说明模块设置叠加于主配置之上、不通过主配置 UI 修改；其公开文档并未逐一规定每个 iOS 版本此页面的显示细节，因此不将“所有版本只显示用户自己写的脚本”作为绝对结论。区别是配置来源与编辑视图，不是脚本作者。
+
+验证依据分为三层：面板卡片出现证明模块的面板声明生效；点击刷新后出现版本、网络、样本或具体错误，证明控制脚本执行；媒体请求 Notes 的 `router_matched`／样本存储更新才证明请求脚本命中。控制脚本已运行但显示暂无样本时，应继续检查媒体请求处理，不再反复排查模块是否导入。
+
+远程 JS 属于外部资源，可从模块相关外部资源页面核对；需要完整配置脚本清单时使用只读 `GET /v1/scripting`，不以 Modify 编辑器列表替代。正常用户测试优先使用现有面板刷新入口，无需因编辑列表为空再次安装模块或复制脚本到主配置。
+
+依据：[Surge 模块的 UI 编辑边界](https://manual.nssurge.com/profile/module.html)、[面板初始内容与运行后结果](https://manual.nssurge.com/tools/panel.html)、[配置脚本与外部资源查询](https://manual.nssurge.com/tools/http-api.html)。
