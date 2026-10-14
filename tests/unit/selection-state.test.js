@@ -96,7 +96,7 @@ test('store: corrupt JSON degrades to empty state and failed writes never throw'
   assert.equal(broken.writeJson(S.KEYS.state, {}), false);
   assert.equal(broken.problems.length, 2);
   const malformed = S.createStore(memoryBackend({
-    [S.KEYS.decisions]: JSON.stringify({ v: 1, items: { ok: { winner: 'a', expiresAt: 1, networkKey: 'n', backups: [1, 'b'] }, bad: { winner: 5 } } }),
+    [S.KEYS.decisions]: JSON.stringify({ v: 1, items: { ok: { winner: 'a', expiresAt: 1, networkKey: 'n', backupVersion: 1, backups: [1, 'b'] }, bad: { winner: 5 } } }),
   }));
   const d = S.loadDecisions(malformed);
   assert.deepEqual(Object.keys(d.items), ['ok']);
@@ -120,4 +120,40 @@ test('logger drops forbidden fields and caps stored events', () => {
   assert.equal(log.droppedCount(), 1);
   assert.equal(log.counts.probe_started, 1);
   assert.ok(lines.every((l) => !/secret|Cookie|Home/.test(l)));
+});
+
+
+test('legacy global failures and unverified backup chains are discarded on upgrade', () => {
+  const store = S.createStore(memoryBackend({
+    [S.KEYS.failures]: JSON.stringify({ v: 1, hosts: { 'cn-a.bilivideo.com': { until: NOW + 100000 } }, resources: { r: { nativeFailedAt: NOW } } }),
+    [S.KEYS.decisions]: JSON.stringify({ v: 1, items: { r: { winner: 'cn-a.bilivideo.com', backups: ['cn-b.bilivideo.com'], networkKey: 'net', expiresAt: NOW + 1000 } } }),
+  }));
+  assert.deepEqual(S.loadFailures(store, 'net'), { resources: {}, hosts: {} });
+  assert.deepEqual(S.loadFailures(store, 'another'), { resources: {}, hosts: {} });
+  assert.deepEqual(S.loadDecisions(store).items.r.backups, []);
+  S.saveFailures(store, 'net', { resources: {}, hosts: { a: { until: NOW + 5000 } } }, NOW);
+  S.saveFailures(store, 'another', { resources: { r: { count: 1 } }, hosts: {} }, NOW + 1);
+  assert.ok(S.loadFailures(store, 'net').hosts.a);
+  assert.deepEqual(S.loadFailures(store, 'another').hosts, {});
+});
+
+test('request correlation storage is bounded and slot collisions never misattribute an ID', () => {
+  const { recordRequest, requestContext, slot, SLOTS, TTL_MS } = require('../../src/core/request-context');
+  const backend = memoryBackend(), store = S.createStore(backend);
+  const seen = {};
+  let collision;
+  for (let i = 0; i <= SLOTS; i++) {
+    const id = 'request-' + i, key = slot(id);
+    if (seen[key]) { collision = [seen[key], id]; break; }
+    seen[key] = id;
+  }
+  assert.ok(collision);
+  const [a, b] = collision;
+  recordRequest(store, a, { resourceKey: 'r', host: 'a' }, NOW);
+  recordRequest(store, b, { resourceKey: 'r', host: 'b' }, NOW);
+  assert.equal(requestContext(store, a, 'r', NOW), null);
+  assert.equal(requestContext(store, b, 'r', NOW).host, 'b');
+  assert.equal(requestContext(store, b, 'r', NOW + TTL_MS), null);
+  for (let i = 0; i < 1000; i++) recordRequest(store, 'id-' + i, { resourceKey: 'r' }, NOW);
+  assert.ok(Object.keys(backend.data).length <= SLOTS);
 });

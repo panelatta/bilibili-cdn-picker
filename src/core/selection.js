@@ -1,5 +1,7 @@
 'use strict';
 
+const { coolingReason } = require('./cooldown');
+
 // Selection rules shared by the router (hot path) and the runner (commit).
 
 // Design §7.5: 4 × a reliably known bitrate, otherwise the configured target.
@@ -27,17 +29,38 @@ function hostBlocked(host, resourceFailure, failures, now) {
   return !!(hf && hf.until > now);
 }
 
+function unavailable(ctx, host) {
+  const rf = ctx.failures && ctx.failures.resources && ctx.failures.resources[ctx.resourceKey];
+  return !ctx.isValidHost(host) || hostBlocked(host, rf, ctx.failures, ctx.now) ||
+    !!(host === ctx.nativeHost && rf && rf.nativeFailedAt) ||
+    !!(ctx.decision && ctx.decision.networkKey === ctx.networkKey && ctx.decision.invalidHosts && ctx.decision.invalidHosts[host]) ||
+    !!coolingReason(ctx.cooldowns, host, ctx.resourceKey, ctx.now);
+}
+
+function switchLimitReached(ctx) {
+  const rf = ctx.failures && ctx.failures.resources && ctx.failures.resources[ctx.resourceKey];
+  if (!rf) return false;
+  const count = Array.isArray(rf.switches)
+    ? rf.switches.filter((e) => e.decisionId === (ctx.decision && ctx.decision.runId || null)).length
+    : rf.count || 0;
+  return count >= ctx.config.maxSwitchesPerResource;
+}
+
+function usableDecisionHost(ctx) {
+  const d = ctx.decision;
+  if (!d || d.networkKey !== ctx.networkKey || !(d.expiresAt > ctx.now) || switchLimitReached(ctx)) return null;
+  return [d.winner].concat(d.backups || []).find((host) => !unavailable(ctx, host)) || null;
+}
+
 // Hot-path routing for one request. Returns {host, reason}; host === native
 // means "pass through untouched".
 function chooseRoute(ctx) {
   const now = ctx.now;
   const native = ctx.nativeHost;
   const config = ctx.config;
-  const failures = ctx.failures || { resources: {}, hosts: {} };
-  const rf = failures.resources ? failures.resources[ctx.resourceKey] : null;
 
   // Bounded rewrites per resource: no endless A -> B -> A loops.
-  if (rf && rf.count >= config.maxSwitchesPerResource) return { host: native, reason: 'switch-limit' };
+  if (switchLimitReached(ctx)) return { host: native, reason: 'switch-limit' };
 
   let chain = null;
   let source = null;
@@ -53,12 +76,11 @@ function chooseRoute(ctx) {
 
   for (let i = 0; i < chain.length; i++) {
     const host = chain[i];
+    if (unavailable(ctx, host)) continue;
     if (host === native) return { host: native, reason: source + '-native' };
-    if (!ctx.isValidHost(host)) continue;
-    if (hostBlocked(host, rf, failures, now)) continue;
     return { host, reason: i === 0 ? source : source + '-fallback' };
   }
   return { host: native, reason: 'fallback-native' };
 }
 
-module.exports = { targetMbps, decideReplacement, chooseRoute };
+module.exports = { targetMbps, decideReplacement, chooseRoute, usableDecisionHost, unavailable };

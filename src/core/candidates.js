@@ -11,6 +11,11 @@ function buildRegistry(data) {
   const list = [];
   const byHost = {};
   const src = data && typeof data === 'object' ? data : {};
+  const disabled = {};
+  (Array.isArray(src.candidates) ? src.candidates : []).forEach((entry) => {
+    const host = normalizeHostname(entry && entry.hostname);
+    if (host && entry.enabled === false) disabled[host] = true;
+  });
   const pools = src.pools && typeof src.pools === 'object' ? src.pools : {};
   (Array.isArray(src.candidates) ? src.candidates : []).forEach((entry) => {
     const hostname = normalizeHostname(entry && entry.hostname);
@@ -19,7 +24,7 @@ function buildRegistry(data) {
       warnings.push('拒绝无效候选 ' + String(entry && entry.hostname).slice(0, 80));
       return;
     }
-    if (entry.enabled === false || byHost[hostname]) return;
+    if (disabled[hostname] || byHost[hostname]) return;
     const item = {
       hostname,
       family,
@@ -37,7 +42,7 @@ function buildRegistry(data) {
     const nodes = rawRegions[code] && Array.isArray(rawRegions[code].nodes) ? rawRegions[code].nodes : [];
     const seen = {};
     regions[code] = nodes.map(normalizeHostname).filter((h) => {
-      if (!h || seen[h] || !mediaHostFamily(h)) return false;
+      if (!h || seen[h] || !byHost[h]) return false;
       seen[h] = true;
       return true;
     });
@@ -46,6 +51,7 @@ function buildRegistry(data) {
     revision: typeof src.revision === 'string' ? src.revision : 'unknown',
     list,
     byHost,
+    disabled,
     regions,
     diversityOrder: diversityOrder(list),
     warnings,

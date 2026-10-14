@@ -4,10 +4,11 @@ const { DiscoverySession } = require('../core/discovery');
 const { buildRegistry, regionHosts } = require('../core/candidates');
 const { buildShortlist, nextExpansionBatch, fullExplorationOrder } = require('../core/shortlist');
 const { applyFailure, coolingReason, pruneCooldowns } = require('../core/cooldown');
-const { decideReplacement, targetMbps } = require('../core/selection');
+const { decideReplacement, targetMbps, usableDecisionHost, unavailable } = require('../core/selection');
 const { createLogger } = require('../core/log');
 const { randomId } = require('../core/hash');
 const { MiB, round } = require('../core/format');
+const { clearRequestContexts } = require('../core/request-context');
 const { RequestPool } = require('../core/pool');
 const { adapterById } = require('../media/adapters');
 const S = require('../core/state');
@@ -57,6 +58,7 @@ async function runAction(ctx) {
     case 'clear-network':
       return clearNetwork(ctx, store, config, now);
     case 'clear-all':
+      clearRequestContexts(store);
       ['samples', 'decisions', 'failures', 'state', 'lease', 'trigger', 'lastRun', 'control'].forEach((k) => store.remove(S.KEYS[k]));
       return { action, status: 'cleared' };
     default:
@@ -134,7 +136,7 @@ async function runDiscovery(ctx, requested, config, warnings) {
   }
   const samples = S.loadSamples(store);
   const decisions = S.loadDecisions(store);
-  const failures = S.loadFailures(store);
+  const failures = S.loadFailures(store, net.key);
   const profile = state.profiles[net.key] || S.emptyProfile(net, startedAt);
   profile.label = net.label;
 
@@ -144,10 +146,10 @@ async function runDiscovery(ctx, requested, config, warnings) {
     (!profile.lastFullScanAt || startedAt - profile.lastFullScanAt > config.fullScanTtlSeconds * 1000) &&
     (!profile.lastFullAttemptAt || startedAt - profile.lastFullAttemptAt > config.fullRetrySeconds * 1000);
   const mode = action === 'full' || fullDue ? 'full' : 'quick';
-  const picked = pickTargets({ samples, decisions, failures, state, net, now: startedAt, config, action, mode });
+  const picked = pickTargets({ samples, decisions, failures, state, net, now: startedAt, config, action, mode, registry });
   if (!picked.targets.length) return early(picked.reason, { network: net.label });
 
-  const runId = randomId(10, rng);
+  const runId = randomId(10, rng) + '-' + startedAt;
   const deadlineAt = startedAt + config.runDeadlineSeconds * 1000;
   const lease = acquireLease(store, runId, startedAt, deadlineAt + LEASE_GRACE_MS, action);
   if (lease.unwritable) return early('store-unavailable', { storeProblems: store.problems.slice(0, 5) });
@@ -201,12 +203,18 @@ function pickTargets(p) {
 
   const hasValid = (s) => {
     const d = decisions.items[s.key];
-    return !!(d && d.networkKey === net.key && d.expiresAt > now);
+    const adapter = adapterById(s.adapter);
+    const profile = state.profiles[net.key];
+    return !!usableDecisionHost({
+      decision: d, nativeHost: s.nativeHost, resourceKey: s.key, networkKey: net.key, now, config, failures,
+      cooldowns: profile && profile.cooldowns,
+      isValidHost: (h) => adapter.isCompatibleHost(h) && (h === s.nativeHost || !(p.registry && p.registry.disabled[h])),
+    });
   };
   let candidates = action === 'quick-force' ? usable : usable.filter((s) => !hasValid(s));
   if (action === 'auto') {
     candidates = candidates.filter((s) => {
-      const a = state.attempts[s.key];
+      const a = state.attempts[net.key + '|' + s.key];
       return !(a && now - a.at < config.retryAfterFailureSeconds * 1000);
     });
   }
@@ -296,10 +304,11 @@ async function runForResource(run, target, mode) {
   const adapter = adapterById(target.adapter);
   const ttlMs = (net.known ? config.historyTtlSeconds : config.unknownNetworkTtlSeconds) * 1000;
   profile.cooldowns = pruneCooldowns(profile.cooldowns, now);
-  const failures = S.loadFailures(run.store);
+  const failures = S.loadFailures(run.store, net.key);
   const rf = failures.resources[target.key];
   const isEligible = (host) => {
     if (!adapter || !adapter.isCompatibleHost(host)) return 'incompatible';
+    if (host !== target.nativeHost && registry.disabled[host]) return 'disabled';
     const c = coolingReason(profile.cooldowns, host, target.key, now);
     if (c) return c;
     const hf = failures.hosts[host];
@@ -433,7 +442,11 @@ function updateProfile(run, target, result, mode) {
       e.refineMbps = round(m.refine.mbps, 2);
       e.refineAt = now;
     }
-    if (m.refine && m.confirm) {
+    if (m.confirmFailed || m.lastKind !== 'ok') {
+      delete e.confirmedMbps;
+      delete e.confirmedAt;
+    }
+    if (m.refine && m.confirm && !m.confirmFailed && m.lastKind === 'ok') {
       e.confirmedMbps = round(Math.min(m.refine.mbps, m.confirm.mbps), 2);
       e.confirmedAt = now;
       e.confirmMode = mode;
@@ -472,9 +485,21 @@ function commitResult(run, target, result, mode) {
   const state = run.state;
   state.profiles[run.net.key] = run.profile;
   state.profiles = S.pruneMap(state.profiles, S.LIMITS.profiles, 'updatedAt');
-  state.attempts[target.key] = { at: run.ctx.now(), status: result.status };
+  state.attempts[run.net.key + '|' + target.key] = { at: run.ctx.now(), status: result.status };
   state.attempts = S.pruneMap(state.attempts, S.LIMITS.attempts, 'at');
   run.store.writeJson(S.KEYS.state, state);
+  // A failed recheck must stop routing through the old choice even when no
+  // replacement was found (timeouts have no response-observer callback).
+  const decisions = S.loadDecisions(run.store);
+  const prior = decisions.items[target.key];
+  if (prior && prior.networkKey === run.net.key) {
+    prior.invalidHosts = prior.invalidHosts || {};
+    Object.keys(result.measurements).forEach((host) => {
+      const m = result.measurements[host];
+      if (m.confirmFailed || m.lastKind !== 'ok') prior.invalidHosts[host] = true;
+    });
+    run.store.writeJson(S.KEYS.decisions, decisions);
+  }
   if (!result.winner) return { committed: false, reason: result.status };
   return commitDecision(run, target, result, mode, false);
 }
@@ -493,7 +518,7 @@ function commitDecision(run, target, result, mode, provisional) {
 
   const winner = result.winner;
   const decisions = S.loadDecisions(store);
-  const failures = S.loadFailures(store);
+  const failures = S.loadFailures(store, net.key);
   const current = decisions.items[target.key];
   let verdict;
   if (current && current.runId === run.runId) {
@@ -501,8 +526,15 @@ function commitDecision(run, target, result, mode, provisional) {
   } else {
     let view = null;
     if (current && current.networkKey === net.key) {
-      const rf = failures.resources[target.key];
-      view = Object.assign({}, current, { failed: !!(rf && rf.hosts && rf.hosts[current.winner]) });
+      const adapter = adapterById(target.adapter);
+      const health = {
+        decision: current, nativeHost: target.nativeHost, resourceKey: target.key, networkKey: net.key, now, failures, config,
+        cooldowns: run.profile.cooldowns,
+        isValidHost: (h) => adapter.isCompatibleHost(h) && (h === target.nativeHost || !run.registry.disabled[h]),
+      };
+      view = Object.assign({}, current, {
+        failed: unavailable(health, current.winner) || !usableDecisionHost(health),
+      });
     }
     verdict = decideReplacement(view, { host: winner.host, score: winner.score }, now, config);
   }
@@ -515,7 +547,9 @@ function commitDecision(run, target, result, mode, provisional) {
       generation: run.meta.generation,
       nativeHost: target.nativeHost,
       winner: winner.host,
-      backups: (result.backups || []).map((b) => b.host).filter((h) => h !== winner.host).slice(0, 3),
+      backupVersion: 1,
+      backups: (result.backups || []).filter((b) => b.confirmed && !run.registry.disabled[b.host])
+        .map((b) => b.host).filter((h) => h !== winner.host).slice(0, 3),
       score: round(winner.score, 2),
       scoreMode: mode,
       enoughFast: !!result.enoughFast,

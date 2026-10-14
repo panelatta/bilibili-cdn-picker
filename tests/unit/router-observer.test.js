@@ -17,41 +17,37 @@ function env(argument, initial) {
   const backend = memoryBackend(initial);
   const store = S.createStore(backend);
   let now = START;
+  let network = WIFI;
+  let seq = 0;
   const api = [];
+  const context = () => ({ argument: argument || '', network, store: S.createStore(backend), now: () => now });
   return {
-    backend,
-    store,
-    api,
+    backend, store, api,
     tick: (ms) => { now += ms; },
     now: () => now,
+    setNetwork(n) { network = n; handleNetworkChange({ store, now: () => now }); },
+    networkKey() { return currentNetwork(network, ensureMeta(store, now), loadConfig(store, argument || '').config).key; },
+    failures() { return S.loadFailures(store, this.networkKey()); },
     request(url, extra) {
-      return handleRequest(Object.assign({
-        request: { url: url || mediaUrl(), method: 'GET', headers: Object.assign({}, HEADERS) },
-        argument: argument || '',
-        network: WIFI,
-        store: S.createStore(backend),
-        now: () => now,
+      return handleRequest(Object.assign(context(), {
+        request: { id: 'req-' + ++seq, url: url || mediaUrl(), method: 'GET', headers: Object.assign({}, HEADERS) },
         httpApi: (m, p, b) => api.push([m, p, b]),
       }, extra || {}));
     },
-    response(url, status, headers, extra) {
-      return handleResponse(Object.assign({
-        request: { url, method: 'GET', headers: Object.assign({}, HEADERS, headers || {}) },
-        response: { status, headers: {} },
-        argument: argument || '',
-        network: WIFI,
-        store: S.createStore(backend),
-        now: () => now,
-      }, extra || {}));
+    dispatch(url, headers) {
+      const original = { id: 'req-' + ++seq, url: url || mediaUrl(), method: 'GET', headers: Object.assign({}, HEADERS, headers || {}) };
+      const out = handleRequest(Object.assign(context(), { request: original }));
+      return { original, actual: Object.assign({}, original, out) };
+    },
+    response(request, status) {
+      return handleResponse(Object.assign(context(), { request, response: { status, headers: {} } }));
     },
     decide(winner, backups, over) {
-      const meta = ensureMeta(store, now);
-      const config = loadConfig(store, argument || '').config;
-      const net = currentNetwork(WIFI, meta, config);
       const key = matchMediaRequest(mediaUrl(), 'GET').info.resourceKey;
       const decisions = S.loadDecisions(store);
       decisions.items[key] = Object.assign({
-        key, winner, backups: backups || [], networkKey: net.key, nativeHost: NATIVE, expiresAt: now + 600000, decidedAt: now, score: 100,
+        key, winner, backupVersion: 1, backups: backups || [], networkKey: this.networkKey(), nativeHost: NATIVE,
+        expiresAt: now + 600000, decidedAt: now, score: 100, runId: 'decision-' + ++seq,
       }, over || {});
       store.writeJson(S.KEYS.decisions, decisions);
       return key;
@@ -149,94 +145,135 @@ test('adaptive mode triggers the runner through the HTTP API, throttled', () => 
   assert.equal(manual.api.length, 0);
 });
 
-test('observer: 403 on the rewritten host falls back to the backup, then native', () => {
+test('observer: 403 on the rewritten host falls back to a confirmed backup, then native', () => {
   const e = env();
-  e.decide('cn-hk-eq-01-14.bilivideo.com', ['cn-bj-se-01-05.bilivideo.com']);
-  assert.equal(e.response(mediaUrl({ host: 'cn-hk-eq-01-14.bilivideo.com' }), 206), null, '206 is the fast path');
-  const r = e.response(mediaUrl({ host: 'cn-hk-eq-01-14.bilivideo.com' }), 403);
-  assert.equal(r.host, 'cn-hk-eq-01-14.bilivideo.com');
+  const winner = 'cn-hk-eq-01-14.bilivideo.com';
+  const backup = 'cn-bj-se-01-05.bilivideo.com';
+  e.decide(winner, [backup]);
+  assert.equal(e.response(e.dispatch().actual, 206), null);
+  const r = e.response(e.dispatch().actual, 403);
+  assert.equal(r.host, winner);
   assert.equal(r.inferred, false);
-  assert.equal(e.request().headers.Host, 'cn-bj-se-01-05.bilivideo.com');
-  e.response(mediaUrl({ host: 'cn-bj-se-01-05.bilivideo.com' }), 404);
+  assert.equal(e.request().headers.Host, backup);
+  e.response(e.dispatch().actual, 404);
   assert.deepEqual(e.request(), {});
 });
 
-test('observer attributes a failure seen on the native URL to the active route', () => {
+test('delayed native failure is never attributed to a winner selected after dispatch', () => {
+  const e = env();
+  const pending = e.dispatch();
+  const winner = 'cn-hk-eq-01-14.bilivideo.com';
+  e.decide(winner);
+  const r = e.response(pending.actual, 403);
+  assert.equal(r.host, NATIVE);
+  assert.equal(r.inferred, false);
+  assert.equal(e.failures().hosts[winner], undefined);
+  assert.equal(e.request().headers.Host, winner);
+});
+
+test('response uses the captured target even if Surge exposes the original URL or decision changes', () => {
+  const e = env();
+  const a = 'cn-hk-eq-01-14.bilivideo.com', b = 'cn-bj-se-01-05.bilivideo.com';
+  e.decide(a);
+  const pending = e.dispatch();
+  e.decide(b);
+  assert.equal(e.response(pending.original, 403).host, a);
+  assert.equal(e.failures().hosts[b], undefined);
+  assert.equal(e.request().headers.Host, b);
+});
+
+test('missing, expired or mismatched request IDs cannot create failure attribution', () => {
   const e = env();
   e.decide('cn-hk-eq-01-14.bilivideo.com');
-  const r = e.response(mediaUrl(), 403, { Host: NATIVE });
-  assert.equal(r.host, 'cn-hk-eq-01-14.bilivideo.com');
-  assert.equal(r.inferred, true);
-  assert.deepEqual(e.request(), {});
+  const pending = e.dispatch().actual;
+  assert.equal(e.response({ ...pending, id: undefined }, 403), null);
+  assert.equal(e.response({ ...pending, id: 'unobserved' }, 403), null);
+  assert.equal(e.response({ ...pending, url: mediaUrl({ rep: 30064 }) }, 403), null);
+  e.tick(300001);
+  assert.equal(e.response(pending, 403), null);
+  assert.deepEqual(e.failures().resources, {});
 });
 
-test('observer: native 403 invalidates the sample; expired signatures are ignored', () => {
+test('observer: native 403 invalidates only that sample; expired signatures are ignored', () => {
   const e = env();
-  e.request();
-  const r = e.response(mediaUrl(), 403);
+  const r = e.response(e.dispatch().actual, 403);
   assert.equal(r.kind, 'forbidden');
-  const failures = S.loadFailures(e.store);
-  const rf = Object.values(failures.resources)[0];
-  assert.ok(rf.nativeFailedAt);
-  assert.deepEqual(failures.hosts, {});
-  const expired = env();
-  assert.equal(expired.response(mediaUrl({ deadlineSec: Math.floor(START / 1000) - 5 }), 403), null);
-  assert.equal(e.response(mediaUrl(), 403, { 'X-BCP-Probe': 'r' }), null, 'own probes are ignored');
+  assert.ok(Object.values(e.failures().resources)[0].nativeFailedAt);
+  assert.deepEqual(e.failures().hosts, {});
+  const expired = e.dispatch(mediaUrl({ deadlineSec: Math.floor(START / 1000) - 5 }));
+  assert.equal(e.response(expired.actual, 403), null);
 });
 
 test('observer: repeated 403s on distinct resources cool the host down', () => {
   const e = env();
   const host = 'cn-hk-eq-01-14.bilivideo.com';
   [30080, 30064, 30032].forEach((rep) => {
-    const meta = ensureMeta(e.store, e.now());
-    const net = currentNetwork(WIFI, meta, loadConfig(e.store, '').config);
     const key = matchMediaRequest(mediaUrl({ rep }), 'GET').info.resourceKey;
     const d = S.loadDecisions(e.store);
-    d.items[key] = { key, winner: host, backups: [], networkKey: net.key, nativeHost: NATIVE, expiresAt: e.now() + 600000, decidedAt: e.now(), score: 90 };
+    d.items[key] = { key, winner: host, backupVersion: 1, backups: [], networkKey: e.networkKey(), nativeHost: NATIVE,
+      expiresAt: e.now() + 600000, decidedAt: e.now(), score: 90, runId: 'test-' + rep };
     e.store.writeJson(S.KEYS.decisions, d);
-    e.response(mediaUrl({ rep, host }), 403);
+    e.response(e.dispatch(mediaUrl({ rep })).actual, 403);
   });
-  const hf = S.loadFailures(e.store).hosts[host];
-  assert.ok(hf.until > e.now());
+  assert.ok(e.failures().hosts[host].until > e.now());
   const other = 'cn-bj-se-01-05.bilivideo.com';
   e.decide(other);
-  e.response(mediaUrl({ host: other }), 503);
-  assert.equal(S.loadFailures(e.store).hosts[other].reason, 'server-error');
+  e.response(e.dispatch().actual, 503);
+  assert.equal(e.failures().hosts[other].reason, 'server-error');
 });
 
 test('network change bumps the generation', () => {
-  const backend = memoryBackend();
-  const store = S.createStore(backend);
+  const store = S.createStore(memoryBackend());
   assert.equal(handleNetworkChange({ store, now: () => START }), 1);
   assert.equal(handleNetworkChange({ store, now: () => START }), 2);
-  assert.equal(S.loadMeta(store).generation, 2);
 });
 
-test('observer ignores failures on hosts outside the resource route (stripped probes)', () => {
+test('stripped probes cannot poison native, winner or backup failures', () => {
   const e = env();
-  e.decide('cn-hk-eq-01-14.bilivideo.com', ['cn-bj-se-01-05.bilivideo.com']);
-  for (let i = 0; i < 4; i++) {
-    assert.equal(e.response(mediaUrl({ host: 'cn-jxnc-cm-01-04.bilivideo.com' }), 403, { Host: 'cn-jxnc-cm-01-04.bilivideo.com' }), null);
+  const a = 'cn-hk-eq-01-14.bilivideo.com', b = 'cn-bj-se-01-05.bilivideo.com';
+  e.decide(a, [b]);
+  for (const host of [NATIVE, a, b, 'cn-jxnc-cm-01-04.bilivideo.com']) {
+    const probe = e.dispatch(mediaUrl({ host }), { Host: host, 'X-BCP-Probe': 'run' });
+    assert.equal(probe.actual.headers['X-BCP-Probe'], undefined);
+    assert.equal(e.response(probe.actual, 403), null);
   }
-  assert.equal(e.response(mediaUrl({ host: 'cn-jxnc-cm-01-04.bilivideo.com' }), 200), null);
-  assert.deepEqual(S.loadFailures(e.store).resources, {});
-  assert.equal(e.request().headers.Host, 'cn-hk-eq-01-14.bilivideo.com');
+  assert.deepEqual(e.failures().resources, {});
+  assert.equal(e.request().headers.Host, a);
 });
 
 test('parallel failures of one host count as one switch; transient errors expire', () => {
+  for (const status of [403, 503]) {
+    const e = env();
+    const host = 'cn-hk-eq-01-14.bilivideo.com', backup = 'cn-bj-se-01-05.bilivideo.com';
+    e.decide(host, [backup]);
+    const pending = Array.from({ length: 3 }, () => e.dispatch().actual);
+    pending.forEach((req) => e.response(req, status));
+    assert.equal(Object.values(e.failures().resources)[0].count, 1);
+    assert.equal(e.request().headers.Host, backup);
+    if (status === 503) {
+      e.tick(301000);
+      assert.equal(e.request().headers.Host, host);
+    }
+  }
+});
+
+test('failures and late responses stay on the dispatch network and exit revision', () => {
   const e = env();
   const host = 'cn-hk-eq-01-14.bilivideo.com';
-  e.decide(host, ['cn-bj-se-01-05.bilivideo.com']);
-  for (let i = 0; i < 3; i++) e.response(mediaUrl({ host }), 403, { Host: host });
-  assert.equal(Object.values(S.loadFailures(e.store).resources)[0].count, 1);
-  assert.equal(e.request().headers.Host, 'cn-bj-se-01-05.bilivideo.com', 'backup first, not native');
-
-  const t = env();
-  t.decide(host, []);
-  for (let i = 0; i < 3; i++) t.response(mediaUrl({ host }), 503, { Host: host });
-  assert.equal(Object.values(S.loadFailures(t.store).resources)[0].count, 1);
-  assert.deepEqual(t.request(), {}, 'cooling down: native');
-  t.tick(301000);
-  t.decide(host, []);
-  assert.equal(t.request().headers.Host, host, 'retried after the short cooldown');
+  e.decide(host);
+  const oldKey = e.networkKey(), pending = e.dispatch().actual;
+  const cell = { v4: { primaryInterface: 'pdp_ip0' }, 'cellular-data': { carrier: 'Singtel', radio: 'NR' } };
+  e.setNetwork(cell);
+  e.decide(host);
+  e.response(pending, 503);
+  assert.ok(S.loadFailures(e.store, oldKey).hosts[host].until > e.now());
+  assert.deepEqual(e.failures(), { resources: {}, hosts: {} });
+  assert.equal(e.request().headers.Host, host);
+  const cellPending = e.dispatch().actual, cellKey = e.networkKey();
+  e.store.writeJson(S.KEYS.config, { routeRevision: 'another-exit' });
+  e.decide(host);
+  e.response(cellPending, 403);
+  assert.ok(Object.keys(S.loadFailures(e.store, cellKey).resources).length);
+  assert.deepEqual(e.failures().resources, {});
+  assert.equal(e.request().headers.Host, host);
 });

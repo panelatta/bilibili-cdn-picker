@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { runAction } = require('../../src/app/runner');
 const { panelMain } = require('../../src/app/panel');
+const { handleResponse } = require('../../src/app/observer');
+const { buildRegistry } = require('../../src/core/candidates');
 const { handleRequest } = require('../../src/app/router');
 const S = require('../../src/core/state');
 const { FakeClock, createCdn, memoryBackend, mediaUrl, NATIVE } = require('../helpers/sim');
@@ -19,21 +21,31 @@ function world(opts) {
   const backend = memoryBackend(o.initial);
   const cdn = createCdn(clock, Object.assign({ [NATIVE]: { mbps: 3, latencyMs: 120 }, [WUHAN]: { mbps: 300, latencyMs: 20 } }, o.behaviors || {}), o.defaults || { mbps: 30, latencyMs: 60 });
   let network = o.network || WIFI;
+  let seq = 0;
   const w = {
     clock,
     backend,
     cdn,
+    apiCalls: [],
     store: () => S.createStore(backend),
     setNetwork: (n) => { network = n; },
     play(url) {
-      return handleRequest({
-        request: { url: url || mediaUrl(), method: 'GET', headers: { 'User-Agent': 'bili-ios', Range: 'bytes=0-999' } },
+      const request = { id: 'play-' + ++seq, url: url || mediaUrl(), method: 'GET', headers: { 'User-Agent': 'bili-ios', Range: 'bytes=0-999' } };
+      const result = handleRequest({
+        request,
+        registry: buildRegistry(o.registryData || data),
         argument: o.argument || '',
         network,
         store: S.createStore(backend),
         now: clock.now,
-        httpApi: () => {},
+        httpApi: (...args) => w.apiCalls.push(args),
       });
+      w.lastRequest = Object.assign({}, request, result);
+      return result;
+    },
+    observe(status) {
+      return handleResponse({ request: w.lastRequest, response: { status, headers: {} }, argument: o.argument || '',
+        network, store: S.createStore(backend), now: clock.now });
     },
     ctx(extra) {
       return Object.assign({
@@ -45,7 +57,7 @@ function world(opts) {
         rng: () => 0.5,
         http: cdn.http,
         setTimer: clock.setTimer,
-        registryData: data,
+        registryData: o.registryData || data,
       }, extra || {});
     },
     run(action, extra) {
@@ -268,4 +280,100 @@ test('clearing a network is refused while a task holds the lease', async () => {
   const w = world();
   w.store().writeJson(S.KEYS.lease, { runId: 'r', expiresAt: w.clock.now() + 60000, action: 'full' });
   assert.equal((await w.run('clear-network')).status, 'busy');
+});
+
+
+test('confirmed failure never becomes a playback backup, including after the winner fails', async () => {
+  const bad = 'upos-sz-mirrorhw.bilivideo.com';
+  const w = world({ behaviors: { [bad]: { mbps: 600, latencyMs: 10, failFrom: 1048576 } } });
+  w.play();
+  await w.run('quick');
+  const d = Object.values(S.loadDecisions(w.store()).items)[0];
+  assert.equal(d.winner, WUHAN);
+  assert.ok(w.cdn.calls.some((c) => c.host === bad && c.start === 1048576 && c.doneAt - c.at === 3000));
+  assert.ok(!d.backups.includes(bad));
+  w.play();
+  w.observe(403);
+  assert.notEqual(w.play().headers?.Host, bad);
+});
+
+test('failed forced recheck invalidates the cached winner even without a replacement', async () => {
+  const w = world();
+  w.play();
+  await w.run('quick');
+  assert.equal(w.play().headers.Host, WUHAN);
+  const failed = createCdn(w.clock, {}, { kind: 'timeout' });
+  const result = await w.run('quick-force', { http: failed.http });
+  assert.equal(result.resources[0].winner, null);
+  assert.deepEqual(w.play(), {});
+  assert.ok(Object.values(S.loadDecisions(w.store()).items)[0].invalidHosts[WUHAN]);
+});
+
+test('manual quick replaces an exhausted chain and starts a new switch-limit epoch', async () => {
+  const w = world();
+  w.play();
+  await w.run('quick');
+  const decisions = S.loadDecisions(w.store());
+  const d = Object.values(decisions.items)[0];
+  d.backups = ['upos-sz-mirrorhwo1.bilivideo.com', 'upos-sz-mirrorhw.bilivideo.com'];
+  w.store().writeJson(S.KEYS.decisions, decisions);
+  for (const host of [d.winner, ...d.backups]) {
+    assert.equal(w.play().headers.Host, host);
+    w.observe(403);
+  }
+  assert.deepEqual(w.play(), {});
+  const result = await w.run('quick');
+  assert.equal(result.resources.length, 1, 'not already-decided');
+  const replacement = Object.values(S.loadDecisions(w.store()).items)[0];
+  assert.notEqual(replacement.runId, d.runId);
+  assert.ok(![d.winner, ...d.backups].includes(replacement.winner));
+  assert.equal(w.play().headers.Host, replacement.winner, 'old switch count cannot disable the new decision');
+});
+
+test('adaptive recovery respects retry backoff, then retries a failed live decision', async () => {
+  for (const status of [403, 503]) {
+    const w = world({ argument: 'mode=adaptive' });
+    w.play();
+    await w.run('auto', { trigger: null });
+    w.play();
+    w.observe(status);
+    const calls = w.cdn.calls.length, triggers = w.apiCalls.length;
+    w.clock.advance(31000);
+    w.play();
+    assert.equal(w.apiCalls.length, triggers, 'no repeated API dispatch during backoff');
+    assert.equal((await w.run('auto', { trigger: null })).status, 'nothing-pending');
+    assert.equal(w.cdn.calls.length, calls);
+    w.clock.advance(270000);
+    w.play();
+    if (status === 403) {
+      assert.equal(w.apiCalls.length, triggers + 1);
+      const retried = await w.run('auto', { trigger: null });
+      assert.equal(retried.resources.length, 1);
+      assert.notEqual(retried.resources[0].winner, WUHAN);
+    } else {
+      // A recovered temporary cooldown leaves the old decision usable.
+      assert.equal(w.play().headers.Host, WUHAN);
+    }
+  }
+});
+
+test('disabled host cannot re-enter via region, history, preferred, cached or full-mode choices', async () => {
+  const registryData = JSON.parse(JSON.stringify(data));
+  registryData.candidates.find((c) => c.hostname === WUHAN).enabled = false;
+  registryData.candidates.push({ hostname: WUHAN, enabled: true }); // explicit disable wins duplicates
+  for (const action of ['quick', 'full']) {
+    const w = world({ registryData });
+    w.store().writeJson(S.KEYS.config, { preferredHosts: [WUHAN] });
+    w.play();
+    const sample = Object.values(S.loadSamples(w.store()).items)[0];
+    w.store().writeJson(S.KEYS.decisions, { v: 1, items: { [sample.key]: {
+      key: sample.key, winner: WUHAN, backups: [], backupVersion: 1, networkKey: sample.networkKey,
+      expiresAt: w.clock.now() + 600000, decidedAt: w.clock.now(), score: 1000, runId: 'old', nativeHost: NATIVE,
+    } }, networks: {} });
+    assert.deepEqual(w.play(), {}, 'cached disabled winner cannot route');
+    const r = await w.run(action);
+    assert.ok(r.resources.length);
+    assert.equal(w.cdn.calls.filter((c) => c.host === WUHAN).length, 0);
+    assert.notEqual(r.resources[0].winner, WUHAN);
+  }
 });

@@ -295,3 +295,23 @@ test('a displaced winner stays available as a confirmed backup', async () => {
   assert.equal(result.winner.host, NATIVE);
   assert.ok(result.backups.some((b) => b.host === SG[0] && b.confirmed));
 });
+
+
+test('quick and full modes exclude failed confirmations and unconfirmed nodes from backups', async () => {
+  const bad = SG[1];
+  for (const mode of ['quick', 'full']) {
+    const clock = new FakeClock();
+    const cdn = createCdn(clock, {
+      [NATIVE]: { mbps: 3, latencyMs: 120 },
+      [WUHAN]: { mbps: 300, latencyMs: 20 },
+      [bad]: { mbps: 600, latencyMs: 10, failFrom: 1048576 },
+    }, { mbps: 30, latencyMs: 60 });
+    const s = session(clock, cdn, { mode });
+    const result = await clock.drive(mode === 'full' ? s.runFull(sgShortlist()) : s.runQuick(sgShortlist(), () => []));
+    assert.equal(result.winner.host, WUHAN);
+    assert.ok(result.measurements[bad].confirmFailed);
+    assert.equal(s.scoreOf(bad), null);
+    assert.ok(!result.backups.some((b) => b.host === bad));
+    result.backups.forEach((b) => { assert.equal(b.confirmed, true); assert.ok(s.scoreOf(b.host) > 0); });
+  }
+});

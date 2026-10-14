@@ -16,11 +16,14 @@ function freshUrl(rep) {
   return mediaUrl({ rep: rep || 30080, deadlineSec: Math.floor(Date.now() / 1000) + 3600 });
 }
 
-function request(device, url, headers) {
-  return device.run('request-router.js', {
-    $argument: ARG,
-    $request: { url, method: 'GET', id: 'r1', headers: Object.assign({ Host: new URL(url).host, 'User-Agent': 'bili-ios', Range: 'bytes=0-999' }, headers || {}) },
-  });
+let requestSeq = 0;
+async function request(device, url, headers) {
+  const original = { url, method: 'GET', id: 'r' + ++requestSeq,
+    headers: Object.assign({ Host: new URL(url).host, 'User-Agent': 'bili-ios', Range: 'bytes=0-999' }, headers || {}) };
+  const result = await device.run('request-router.js', { $argument: ARG, $request: original });
+  result.request = Object.assign({}, original, result.value);
+  result.original = original;
+  return result;
 }
 
 test('built bundles are current with src/', () => {
@@ -95,7 +98,7 @@ test('Surge flow with bundles: capture, panel tap, rewrite, 403 fallback', async
   // The selected node answers 403: the observer records it, later requests fall back.
   const observed = await device.run('response-observer.js', {
     $argument: ARG,
-    $request: { url: freshUrl().replace(NATIVE, WUHAN), method: 'GET', id: 'r1', headers: { Host: WUHAN } },
+    $request: rewritten.request,
     $response: { status: 403, headers: {} },
   });
   assert.equal(JSON.stringify(observed.value), '{}');
@@ -132,4 +135,24 @@ test('router errors still complete the request exactly once', async () => {
   // VM objects come from another realm: compare their JSON form.
   assert.equal(JSON.stringify(r.value), '{}');
   assert.equal(r.doneCount(), 1);
+});
+
+
+test('bundles retain request-time attribution across selection and ignore stripped probe failures', async () => {
+  const device = createDevice({ cdn: { [NATIVE]: { delayMs: 120 }, [WUHAN]: { delayMs: 2 } } });
+  const url = freshUrl();
+  const pendingNative = await request(device, url);
+  await device.run('control-panel.js', { $argument: ARG + '&action=quick', $trigger: 'button' });
+  const pendingWinner = await request(device, url);
+  assert.equal(pendingWinner.request.headers.Host, WUHAN);
+  const probe = await request(device, url.replace(NATIVE, WUHAN), { 'X-BCP-Probe': 'probe' });
+  await device.run('response-observer.js', { $argument: ARG, $request: probe.request, $response: { status: 403, headers: {} } });
+  assert.equal(device.store.get('BiliCDNPicker.failures'), undefined);
+  await device.run('response-observer.js', { $argument: ARG, $request: pendingNative.request, $response: { status: 403, headers: {} } });
+  const root = JSON.parse(device.store.get('BiliCDNPicker.failures'));
+  assert.equal(root.v, 2);
+  const scope = Object.values(root.networks)[0];
+  assert.equal(scope.hosts[WUHAN], undefined);
+  assert.ok(Object.values(scope.resources)[0].nativeFailedAt);
+  assert.equal((await request(device, url)).request.headers.Host, WUHAN);
 });

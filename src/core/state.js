@@ -1,7 +1,7 @@
 'use strict';
 
-// Persistent state layout (design §8). Each key has exactly one writer role
-// so concurrent scripts never read-modify-write the same entry:
+// Persistent state layout (design §8). Separate writer roles reduce contention;
+// parallel sessions of the same role can still race on read/modify/write:
 //   samples   <- request router        failures <- response observer
 //   decisions <- discovery runner      state    <- discovery runner
 //   meta      <- network event (+ one-time salt init)
@@ -122,7 +122,7 @@ function loadDecisions(store) {
     Object.keys(src).forEach((k) => {
       const d = src[k];
       if (isObject(d) && typeof d.winner === 'string' && typeof d.expiresAt === 'number' && typeof d.networkKey === 'string') {
-        d.backups = Array.isArray(d.backups) ? d.backups.filter((h) => typeof h === 'string') : [];
+        d.backups = d.backupVersion === 1 && Array.isArray(d.backups) ? d.backups.filter((h) => typeof h === 'string') : [];
         items[k] = d;
       }
     });
@@ -136,12 +136,26 @@ function loadDecisions(store) {
   });
 }
 
-function loadFailures(store) {
-  return versioned(store.readJson(KEYS.failures, null), (raw) => ({
-    v: SCHEMA_VERSION,
+function failureNetworks(store) {
+  const raw = store.readJson(KEYS.failures, null);
+  // Legacy failures have no trustworthy network identity; do not migrate
+  // them into whichever network happens to be active during an upgrade.
+  return isObject(raw) && raw.v === 2 && isObject(raw.networks) ? raw.networks : {};
+}
+
+function loadFailures(store, networkKey) {
+  const raw = failureNetworks(store)[networkKey] || {};
+  return {
     resources: isObject(raw.resources) ? raw.resources : {},
     hosts: isObject(raw.hosts) ? raw.hosts : {},
-  }));
+  };
+}
+
+function saveFailures(store, networkKey, failures, now) {
+  if (!networkKey) return false;
+  const networks = failureNetworks(store);
+  networks[networkKey] = Object.assign({}, failures, { updatedAt: now });
+  return store.writeJson(KEYS.failures, { v: 2, networks: pruneMap(networks, LIMITS.networks, 'updatedAt') });
 }
 
 function emptyProfile(net, now) {
@@ -191,6 +205,7 @@ module.exports = {
   loadSamples,
   loadDecisions,
   loadFailures,
+  saveFailures,
   loadState,
   loadControl,
   emptyProfile,

@@ -126,3 +126,13 @@ test('full exploration order interleaves untested hosts with history', () => {
   const order = fullExplorationOrder('n.bilivideo.com', ['a', 'b', 'c', 'd', 'e', 'n.bilivideo.com'], ['x', 'y', 'a', 'z'], 3);
   assert.deepEqual(order, ['n.bilivideo.com', 'a', 'b', 'c', 'x', 'd', 'e', 'y', 'z']);
 });
+
+
+test('disabled entries override duplicates and are removed from regional recommendations', () => {
+  const a = 'cn-a.bilivideo.com', b = 'cn-b.bilivideo.com';
+  const reg = buildRegistry({ candidates: [{ hostname: a, enabled: false }, { hostname: a }, { hostname: b }],
+    regions: { SG: { nodes: [a, b, 'cn-unknown.bilivideo.com'] } } });
+  assert.deepEqual(reg.list.map((e) => e.hostname), [b]);
+  assert.deepEqual(reg.regions.SG, [b]);
+  assert.equal(reg.disabled[a], true);
+});

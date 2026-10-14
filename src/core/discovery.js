@@ -128,7 +128,7 @@ class DiscoverySession {
       m.successes++;
       const entry = { mbps: result.mbps, elapsedMs: result.elapsedMs, bytes: result.bytes, order: result.order };
       if (result.stage === 'refine') m.refine = entry;
-      else if (result.stage === 'confirm') m.confirm = entry;
+      else if (result.stage === 'confirm') { m.confirm = entry; m.confirmFailed = false; }
       else {
         if (!m.coarse || entry.elapsedMs < m.coarse.elapsedMs) m.coarse = entry;
         this.coarseValid[result.host] = true;
@@ -137,7 +137,7 @@ class DiscoverySession {
         stage: result.stage, host: result.host, elapsedMs: result.elapsedMs, bytes: result.bytes, mbps: result.mbps,
       });
     } else {
-      if (result.stage === 'confirm') m.confirmFailed = true;
+      if (result.stage === 'confirm') { m.confirmFailed = true; delete m.confirm; }
       if (result.kind !== 'timeout' && result.kind !== 'short-object') {
         this.failures.push({ host: result.host, kind: result.kind, status: result.status, retryAfterSec: result.retryAfterSec });
       }
@@ -314,7 +314,7 @@ class DiscoverySession {
 
   scoreOf(host) {
     const m = this.measurements[host];
-    if (!m || !m.refine || !m.confirm) return null;
+    if (!m || !m.refine || !m.confirm || m.confirmFailed || m.lastKind !== 'ok') return null;
     return Math.min(m.refine.mbps, m.confirm.mbps);
   }
 
@@ -431,11 +431,6 @@ class DiscoverySession {
           const score = this.scoreOf(refined[i].host);
           if (score !== null) confirmed = { host: refined[i].host, score };
         }
-        refined.forEach((x) => {
-          if ((!confirmed || x.host !== confirmed.host) && backups.every((b) => b.host !== x.host)) {
-            backups.push({ host: x.host, mbps: x.mbps, confirmed: false });
-          }
-        });
         await this.confirmNativeIfClose(confirmed, plan.confirmBytes);
         if (confirmed && (!best || confirmed.score > best.score)) {
           if (best) backups.unshift({ host: best.host, mbps: best.score, confirmed: true });
@@ -454,7 +449,7 @@ class DiscoverySession {
       }
       if (best && this.onProvisional && provisionalHost !== best.host) {
         provisionalHost = best.host;
-        const provisionalBackups = backups.slice();
+        const provisionalBackups = this.confirmedBackups(best);
         this.onProvisional(this.settleWinner(best, provisionalBackups), provisionalBackups);
       }
       if (!cfg.expandOnMiss) {
@@ -527,15 +522,17 @@ class DiscoverySession {
           .sort((a, b) => b.score - a.score);
         best = confirmed[0] || null;
         backups = confirmed.slice(1).map((x) => ({ host: x.host, mbps: x.score, confirmed: true }));
-        this.validRefine(ranked).forEach((x) => {
-          if ((!best || x.host !== best.host) && backups.every((b) => b.host !== x.host)) {
-            backups.push({ host: x.host, mbps: x.mbps, confirmed: false });
-          }
-        });
       }
     }
     const winner = best ? this.settleWinner(best, backups) : null;
     return this.finish(null, winner, backups, stopReason, orderedHosts.length);
+  }
+
+  confirmedBackups(winner) {
+    return Object.keys(this.measurements)
+      .map((host) => ({ host, mbps: this.scoreOf(host), confirmed: true }))
+      .filter((b) => b.mbps !== null && (!winner || b.host !== winner.host))
+      .sort((a, b) => b.mbps - a.mbps).slice(0, 4);
   }
 
   finish(status, winner, backups, stopReason, eligible) {
@@ -554,7 +551,7 @@ class DiscoverySession {
       mode: this.mode,
       status,
       winner: winner || null,
-      backups: (backups || []).filter((b) => !winner || b.host !== winner.host).slice(0, 4),
+      backups: this.confirmedBackups(winner),
       enoughFast: !!winner && winner.score >= this.targetMbps,
       targetMbps: this.targetMbps,
       stopReason: stopReason || 'completed',

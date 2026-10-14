@@ -2,10 +2,14 @@
 
 const { matchMediaRequest } = require('../media/adapters');
 const { replaceHost } = require('../media/url');
-const { withHost, withoutHeaders, hasProbeMarker, pickHeaders, PROBE_MARKER } = require('../media/headers');
-const { chooseRoute } = require('../core/selection');
-const { KEYS, LIMITS, loadSamples, loadDecisions, loadFailures, loadControl, pruneMap } = require('../core/state');
+const { withHost, withoutHeaders, hasProbeMarker, pickHeaders, getHeader, PROBE_MARKER } = require('../media/headers');
+const { chooseRoute, usableDecisionHost } = require('../core/selection');
+const { KEYS, LIMITS, loadSamples, loadDecisions, loadFailures, loadControl, loadState, pruneMap } = require('../core/state');
 const { loadConfig, ensureMeta, currentNetwork } = require('./context');
+
+const { recordRequest } = require('../core/request-context');
+const { buildRegistry } = require('../core/candidates');
+const defaultRegistry = buildRegistry(require('../../data/cdn-candidates.json'));
 
 // Request hot path (design §4.3). No probing and no waiting here: validate,
 // read the cached decision, rewrite host + Host or pass through, update the
@@ -20,6 +24,7 @@ function handleRequest(ctx) {
   // A probe from our own runner re-entered the HTTP engine: strip the marker
   // so it never leaves the device, and never rewrite or sample it.
   if (hasProbeMarker(request.headers)) {
+    recordRequest(ctx.store, request.id, { probe: true, resourceKey: match.info.resourceKey }, ctx.now());
     if (ctx.log) ctx.log('probe re-entered request script (' + match.parsed.host + ')');
     return { headers: withoutHeaders(request.headers, [PROBE_MARKER]) };
   }
@@ -34,22 +39,35 @@ function handleRequest(ctx) {
   const info = match.info;
   const decisions = loadDecisions(store);
   const decision = decisions.items[info.resourceKey] || null;
-  const route = chooseRoute({
+  const registry = ctx.registry || defaultRegistry;
+  const state = loadState(store);
+  const profile = state.profiles[net.key];
+  const routeContext = {
     now,
     nativeHost: info.nativeHost,
     resourceKey: info.resourceKey,
     networkKey: net.key,
     decision,
     networkBest: decisions.networks[net.key] || null,
-    failures: loadFailures(store),
+    failures: loadFailures(store, net.key),
+    cooldowns: profile && profile.cooldowns,
     config,
-    isValidHost: (h) => match.adapter.isCompatibleHost(h),
-  });
+    isValidHost: (h) => match.adapter.isCompatibleHost(h) && (h === info.nativeHost || !registry.disabled[h]),
+  };
+  const route = chooseRoute(routeContext);
 
-  const hasDecision = !!(decision && decision.networkKey === net.key && decision.expiresAt > now);
+  const hasDecision = !!usableDecisionHost(routeContext);
+  recordRequest(store, request.id, {
+    probe: false, resourceKey: info.resourceKey, nativeHost: info.nativeHost,
+    host: route.host, networkKey: net.key, generation: meta.generation,
+    decisionId: decision && decision.networkKey === net.key ? decision.runId || null : null,
+    hasRange: getHeader(request.headers, 'Range') !== null,
+  }, now);
   const captured = captureSample(store, match, request, net, config, now);
   if (captured && config.debug && ctx.log) ctx.log('sample_captured ' + info.mediaType + ' ' + info.nativeHost);
-  if (config.mode === 'adaptive' && !hasDecision && captured && (!net.cellular || config.cellularDiscovery)) {
+  const attempt = state.attempts[net.key + '|' + info.resourceKey];
+  const retryDue = !attempt || now - attempt.at >= config.retryAfterFailureSeconds * 1000;
+  if (config.mode === 'adaptive' && !hasDecision && retryDue && captured && (!net.cellular || config.cellularDiscovery)) {
     maybeTrigger(ctx, store, config, now, info.resourceKey);
   }
 
