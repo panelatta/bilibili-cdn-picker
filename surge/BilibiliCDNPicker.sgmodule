@@ -1,7 +1,7 @@
 #!name=Bilibili CDN Picker
 #!desc=B 站点播 DASH 媒体 CDN 测速与选择（v0.3.1，手动探索版）。用当前播放资源做 Range 实测，只改写后续 /upgcxcode/*.m4s 请求的主机与 Host。需开启 MITM 并信任证书；停用模块即恢复原生行为。
 #!category=Bilibili
-#!arguments=ENABLED:true,MODE:manual,REGION:SG,TARGET_MBPS:80,HISTORY_POLICY:conservative,CELLULAR_DISCOVERY:false,ROUTE_REVISION:default,PROBE_POLICY:,DEBUG:false
+#!arguments=ENABLED:true,MODE:manual,REGION:SG,TARGET_MBPS:80,HISTORY_POLICY:conservative,CELLULAR_DISCOVERY:false,ROUTE_REVISION:default,PROBE_POLICY,DEBUG:false
 #!arguments-desc=ENABLED 总开关；MODE=manual|adaptive（adaptive 需先完成生命周期实验）；REGION 为出口地区推荐表（SG/TW/HK/JP/AU/US/NONE）；TARGET_MBPS 为未知码率时的足够快目标；HISTORY_POLICY=conservative|optimistic；CELLULAR_DISCOVERY 允许蜂窝自动/完整探索；ROUTE_REVISION 在更换代理出口后修改以隔离历史；PROBE_POLICY 为测速使用的策略名（留空则按规则）；DEBUG 输出脱敏调试日志。
 
 [Script]

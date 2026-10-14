@@ -2,7 +2,7 @@
 
 面向 iOS Surge 的 B 站点播 CDN 测速与选择模块。它用当前正在播放的视频或音频资源，对候选 CDN 做分阶段 Range 测速，确认足够快的节点后，只把同一资源后续的媒体请求改写到该节点。
 
-当前版本 v0.3.1 是首版实现（手动探索版），通过 105 个自动化测试，包括在模拟 Surge 运行时中执行构建产物的集成测试。iOS、Surge 与 Bilibili App 实机上的运行时能力尚未验证；正式使用前请按 [M0 实机能力验证清单](docs/runtime-experiments.md) 逐项确认。
+当前版本 v0.3.1 是首版实现（手动探索版），通过 113 个自动化测试，包括在模拟 Surge 运行时中执行构建产物的集成测试。iOS、Surge 与 Bilibili App 实机上的运行时能力尚未验证；正式使用前请按 [M0 实机能力验证清单](docs/runtime-experiments.md) 逐项确认。
 
 ## 工作方式
 
@@ -21,6 +21,8 @@
 ## 安装
 
 手机直接安装：[远程模块](https://raw.githubusercontent.com/panelatta/bilibili-cdn-picker/main/surge/BilibiliCDNPicker.remote.sgmodule) · [一键导入 Surge](surge:///install-module?url=https%3A%2F%2Fraw.githubusercontent.com%2Fpanelatta%2Fbilibili-cdn-picker%2Fmain%2Fsurge%2FBilibiliCDNPicker.remote.sgmodule)。在 Surge 的模块管理中选择通过 URL 安装，粘贴远程模块地址并启用即可，无需复制本地 JS 文件。远程版脚本固定到已验证提交 `a425c80fe70f216d05a7fefea3123824217e47af`（v0.3.1）。
+
+若旧链接导入时报 `Malformed argument declaration … PROBE_POLICY:`，重新获取修正后的远程模块；无默认值的声明已改为 `PROBE_POLICY`，参数仍可留空。
 
 第一次使用先完成[手机首轮验证](docs/runtime-experiments.md#手机首轮验证)，再考虑开启自动模式。以下为手工部署方式：
 
@@ -74,6 +76,8 @@
 { "quickTargetMiB": 8, "discoveryConcurrency": 6, "preferredHosts": ["cn-hk-eq-01-14.bilivideo.com"] }
 ```
 
+远程模块默认脚本基地址由 `tools/remote-module.json` 固定，正常构建会同时生成两个模块；自定义发布可使用 `--base-url` 覆盖，检查时传入相同参数。
+
 完整的键名、默认值和取值范围见 [src/core/config.js](src/core/config.js)。无效值会回落到默认值，并在面板显示警告。
 
 ## 限制
@@ -97,7 +101,7 @@
 ```sh
 npm test                  # 单元测试与集成测试
 node tools/build.mjs      # 生成 surge/ 下的脚本与模块
-npm run check             # 校验 surge/ 与源码一致并运行测试
+npm run check             # 校验脚本、本地与远程模块格式和构建一致性，并运行测试
 ```
 
 | 目录 | 内容 |

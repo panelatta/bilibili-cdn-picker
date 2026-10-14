@@ -58,13 +58,16 @@ test('module file: scripts exist, patterns match only supported media, arguments
 
 test('Surge flow with bundles: capture, panel tap, rewrite, 403 fallback', async () => {
   const device = createDevice({ cdn: { [NATIVE]: { delayMs: 120 }, [WUHAN]: { delayMs: 2 } } });
+  // One signed resource per test: regenerating deadline on every call can
+  // cross a wall-clock second and turn a cache-hit assertion into a miss.
+  const url = freshUrl();
 
   // Unrelated traffic passes untouched.
   const other = await request(device, 'https://api.bilibili.com/x/web-interface/nav', {});
   assert.equal(JSON.stringify(other.value), '{}');
 
   // First media request: no decision yet, original request continues.
-  const first = await request(device, freshUrl());
+  const first = await request(device, url);
   assert.equal(JSON.stringify(first.value), '{}');
   assert.equal(first.doneCount(), 1);
   assert.ok(device.store.get('BiliCDNPicker.samples').includes(NATIVE));
@@ -85,13 +88,13 @@ test('Surge flow with bundles: capture, panel tap, rewrite, 403 fallback', async
   });
 
   // Later requests for the same resource go to the selected node.
-  const rewritten = await request(device, freshUrl());
-  assert.equal(rewritten.value.url, freshUrl().replace(NATIVE, WUHAN));
+  const rewritten = await request(device, url);
+  assert.equal(rewritten.value.url, url.replace(NATIVE, WUHAN));
   assert.equal(rewritten.value.headers.Host, WUHAN);
   assert.equal(rewritten.value.headers.Range, 'bytes=0-999');
 
   // A probe re-entering the router is stripped and left alone.
-  const probe = await request(device, freshUrl().replace(NATIVE, WUHAN), { 'X-BCP-Probe': 'x' });
+  const probe = await request(device, url.replace(NATIVE, WUHAN), { 'X-BCP-Probe': 'x' });
   assert.equal(probe.value.headers['X-BCP-Probe'], undefined);
   assert.equal(probe.value.url, undefined);
 
@@ -102,7 +105,7 @@ test('Surge flow with bundles: capture, panel tap, rewrite, 403 fallback', async
     $response: { status: 403, headers: {} },
   });
   assert.equal(JSON.stringify(observed.value), '{}');
-  const after = await request(device, freshUrl());
+  const after = await request(device, url);
   assert.notEqual(after.value.headers && after.value.headers.Host, WUHAN);
 
   // Network change event and Shortcuts stop action.

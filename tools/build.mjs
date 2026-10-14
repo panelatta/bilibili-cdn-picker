@@ -1,7 +1,7 @@
 // Bundle src/ into self-contained Surge scripts and render the module.
 //
 // Usage:
-//   node tools/build.mjs                      write surge/*.js and surge/BilibiliCDNPicker.sgmodule
+//   node tools/build.mjs                      write scripts and both local/remote modules
 //   node tools/build.mjs --base-url <url/>    also write surge/BilibiliCDNPicker.remote.sgmodule
 //                                             with absolute script-path URLs
 //   node tools/build.mjs --check              verify surge/ matches src/ (no writes)
@@ -13,6 +13,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve, relative, posix, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import moduleValidation from './validate-module.cjs';
+const { validateModule } = moduleValidation;
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = resolve(ROOT, 'surge');
@@ -42,8 +44,8 @@ const REQUIRE_RE = /\brequire\((['"])(\.{1,2}\/[^'"]+)\1\)/g;
 const argv = process.argv.slice(2);
 const check = argv.includes('--check');
 const baseIndex = argv.indexOf('--base-url');
-const baseUrl = baseIndex >= 0 ? argv[baseIndex + 1] : null;
-if (baseIndex >= 0 && !/^https:\/\/[^\s"]+\/$/.test(baseUrl || '')) {
+const baseUrl = baseIndex >= 0 ? argv[baseIndex + 1] : JSON.parse(readFileSync(resolve(ROOT, 'tools/remote-module.json'), 'utf8')).baseUrl;
+if (!/^https:\/\/[^\s",?#]+\/$/.test(baseUrl || '')) {
   console.error('--base-url must be an https URL ending with "/"');
   process.exit(2);
 }
@@ -120,11 +122,13 @@ function bundle(name, entryId) {
 }
 
 function renderModule(base) {
-  return readFileSync(resolve(ROOT, MODULE_TEMPLATE), 'utf8')
+  const text = readFileSync(resolve(ROOT, MODULE_TEMPLATE), 'utf8')
     .replaceAll('@@VERSION@@', version)
     .replaceAll('@@PATTERN@@', MEDIA_PATTERN)
     .replaceAll('@@ARGS@@', MODULE_ARGS)
     .replaceAll('@@BASE@@', base);
+  validateModule(text, { remote: !!base });
+  return text;
 }
 
 const outputs = {};
@@ -135,13 +139,13 @@ if (baseUrl) outputs['BilibiliCDNPicker.remote.sgmodule'] = renderModule(baseUrl
 if (check) {
   const stale = Object.keys(outputs).filter((name) => {
     const path = resolve(OUT_DIR, name);
-    return name !== 'BilibiliCDNPicker.remote.sgmodule' && (!existsSync(path) || readFileSync(path, 'utf8') !== outputs[name]);
+    return !existsSync(path) || readFileSync(path, 'utf8') !== outputs[name];
   });
   if (stale.length) {
     console.error('surge/ is out of date, run `node tools/build.mjs`: ' + stale.join(', '));
     process.exit(1);
   }
-  console.log('surge/ is up to date (' + Object.keys(ENTRIES).length + ' scripts + module)');
+  console.log('surge/ is up to date (' + Object.keys(ENTRIES).length + ' scripts + local/remote modules)');
 } else {
   mkdirSync(OUT_DIR, { recursive: true });
   for (const [name, code] of Object.entries(outputs)) {

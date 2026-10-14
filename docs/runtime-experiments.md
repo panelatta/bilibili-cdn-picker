@@ -1,6 +1,6 @@
 # M0 实机能力验证清单
 
-本清单对应[开发设计文档](development-design.md) §13.1。代码中的 105 个自动化测试只覆盖逻辑与构建产物；下列行为依赖 iOS、Surge 和 Bilibili App 的真实运行时，必须在目标设备上逐项确认。每项都记录 iOS、Surge、Bilibili App 版本及网络类型。
+本清单对应[开发设计文档](development-design.md) §13.1。代码中的 113 个自动化测试只覆盖逻辑与构建产物；下列行为依赖 iOS、Surge 和 Bilibili App 的真实运行时，必须在目标设备上逐项确认。每项都记录 iOS、Surge、Bilibili App 版本及网络类型。
 
 ## 手机首轮验证
 
